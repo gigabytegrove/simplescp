@@ -113,7 +113,7 @@ SIMPLE_SCP_MASTER_KEY_FILE=/run/secrets/simplescp_master_key
 SIMPLE_SCP_ADMIN_PASSWORD_FILE=/run/secrets/simplescp_admin_password
 ```
 
-The bootstrap admin password is only needed while creating the first account. Once the database contains a user, remove the bootstrap password from the deployment configuration.
+If `SIMPLE_SCP_ADMIN_PASSWORD` is present, SimpleSCP keeps the configured administrator account synchronized with that password on startup. This makes container redeploys deterministic even when the persistent database volume already exists. Remove the variable after bootstrap if you do not want startup-time password synchronization.
 
 Back up the exact master key separately from the database.
 
@@ -128,7 +128,7 @@ Back up the exact master key separately from the database.
 | `SIMPLE_SCP_MASTER_KEY` | required | Base64-encoded 32-byte credential encryption key |
 | `SIMPLE_SCP_MASTER_KEY_FILE` | empty | Mounted-file alternative for the master key |
 | `SIMPLE_SCP_ADMIN_USER` | `admin` | Initial administrator username |
-| `SIMPLE_SCP_ADMIN_PASSWORD` | first boot only | Initial administrator password |
+| `SIMPLE_SCP_ADMIN_PASSWORD` | first boot required | Initial administrator password; when present, synchronizes the configured admin credential at startup |
 | `SIMPLE_SCP_ADMIN_PASSWORD_FILE` | empty | Mounted-file alternative for the initial password |
 | `SIMPLE_SCP_COOKIE_SECURE` | `false` | Require HTTPS-only session cookies |
 | `SIMPLE_SCP_SESSION_TTL` | `24h` | Session lifetime |
