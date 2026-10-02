@@ -257,6 +257,24 @@ func validateConnection(c *Connection) error {
 	if c.Name == "" || c.Host == "" || c.Username == "" {
 		return errors.New("name, host, and username are required")
 	}
+	if len(c.Name) > 128 {
+		return errors.New("connection name is too long")
+	}
+	if len(c.Host) > 253 {
+		return errors.New("host is too long")
+	}
+	if len(c.Username) > 128 {
+		return errors.New("username is too long")
+	}
+	if len(c.DefaultPath) > 4096 {
+		return errors.New("default path is too long")
+	}
+	if len(c.Password) > 4096 || len(c.Passphrase) > 4096 {
+		return errors.New("credential value is too long")
+	}
+	if len(c.PrivateKey) > 65536 {
+		return errors.New("private key is too large")
+	}
 	if c.Port < 1 || c.Port > 65535 {
 		return errors.New("port must be between 1 and 65535")
 	}
@@ -264,6 +282,20 @@ func validateConnection(c *Connection) error {
 		return errors.New("auth_type must be password or key")
 	}
 	if c.DefaultPath == "" { c.DefaultPath = "/" }
+	return nil
+}
+
+func validateActiveSecret(c Connection) error {
+	switch c.AuthType {
+	case "password":
+		if c.Password == "" {
+			return errors.New("password authentication requires a password")
+		}
+	case "key":
+		if strings.TrimSpace(c.PrivateKey) == "" {
+			return errors.New("key authentication requires a private key")
+		}
+	}
 	return nil
 }
 
@@ -276,6 +308,7 @@ func (s *Store) SaveConnection(c Connection) (Connection, error) {
 	if err != nil { return Connection{}, err }
 
 	if c.ID == 0 {
+		if err := validateActiveSecret(c); err != nil { return Connection{}, err }
 		res, err := s.db.Exec(`
 INSERT INTO connections(user_id,name,host,port,username,auth_type,encrypted_secret,host_key_fingerprint,default_path)
 VALUES(?,?,?,?,?,?,?,?,?)`, c.UserID,c.Name,c.Host,c.Port,c.Username,c.AuthType,encrypted,c.HostKeyFingerprint,c.DefaultPath)
@@ -292,6 +325,7 @@ VALUES(?,?,?,?,?,?,?,?,?)`, c.UserID,c.Name,c.Host,c.Port,c.Username,c.AuthType,
 		encrypted, err = s.vault.Encrypt(raw)
 		if err != nil { return Connection{}, err }
 	}
+	if err := validateActiveSecret(c); err != nil { return Connection{}, err }
 	_, err = s.db.Exec(`
 UPDATE connections SET name=?,host=?,port=?,username=?,auth_type=?,encrypted_secret=?,host_key_fingerprint=?,default_path=?,updated_at=CURRENT_TIMESTAMP
 WHERE id=? AND user_id=?`, c.Name,c.Host,c.Port,c.Username,c.AuthType,encrypted,c.HostKeyFingerprint,c.DefaultPath,c.ID,c.UserID)
