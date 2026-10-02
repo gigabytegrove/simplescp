@@ -15,7 +15,7 @@ const state = {
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
-const $ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+const all = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 function makePaneState() {
   return {
@@ -301,7 +301,7 @@ function renderConnections() {
       '</div></div>';
   }).join("");
 
-  $$(".connection-card", host).forEach(function (card) {
+  all(".connection-card", host).forEach(function (card) {
     card.addEventListener("click", function (event) {
       const btn = event.target.closest("button");
       if (!btn) return;
@@ -313,7 +313,7 @@ function renderConnections() {
 }
 
 function renderServerSelects() {
-  $$(".file-pane").forEach(function (paneEl) {
+  all(".file-pane").forEach(function (paneEl) {
     const side = paneEl.dataset.pane;
     const pane = state.panes[side];
     const select = $(".server-select", paneEl);
@@ -513,7 +513,7 @@ function renderEntries(side, entries) {
       '</tr>';
   }).join("");
 
-  $$(".entry-row", tbody).forEach(function (row) {
+  all(".entry-row", tbody).forEach(function (row) {
     row.addEventListener("click", function (event) {
       setActivePane(side);
       selectEntry(side, row, event.ctrlKey || event.metaKey, event.shiftKey);
@@ -541,7 +541,7 @@ function rowItem(row) {
 
 function syncRowSelection(side) {
   const selectedPaths = new Set(state.panes[side].selected.map(function (entry) { return entry.path; }));
-  $$(".entry-row", paneElement(side)).forEach(function (row) {
+  all(".entry-row", paneElement(side)).forEach(function (row) {
     row.classList.toggle("selected", selectedPaths.has(row.dataset.path));
     row.setAttribute("aria-selected", selectedPaths.has(row.dataset.path) ? "true" : "false");
   });
@@ -549,7 +549,7 @@ function syncRowSelection(side) {
 
 function selectEntry(side, row, additive, range) {
   const pane = state.panes[side];
-  const rows = $$(".entry-row", paneElement(side)).filter(function (candidate) { return !candidate.hidden; });
+  const rows = all(".entry-row", paneElement(side)).filter(function (candidate) { return !candidate.hidden; });
   const index = rows.indexOf(row);
   const item = rowItem(row);
 
@@ -581,7 +581,7 @@ function selectEntry(side, row, additive, range) {
 }
 
 function selectAllVisible(side) {
-  const rows = $$(".entry-row", paneElement(side)).filter(function (row) { return !row.hidden; });
+  const rows = all(".entry-row", paneElement(side)).filter(function (row) { return !row.hidden; });
   state.panes[side].selected = rows.map(rowItem);
   state.selectionAnchor[side] = rows.length ? 0 : null;
   syncRowSelection(side);
@@ -956,8 +956,8 @@ async function copySelected(side) {
 
 function updateAuthFields() {
   const type = $("#connectionForm").elements.auth_type.value;
-  $$(".auth-password").forEach(function (el) { el.classList.toggle("hidden", type !== "password"); });
-  $$(".auth-key").forEach(function (el) { el.classList.toggle("hidden", type !== "key"); });
+  all(".auth-password").forEach(function (el) { el.classList.toggle("hidden", type !== "password"); });
+  all(".auth-key").forEach(function (el) { el.classList.toggle("hidden", type !== "key"); });
 }
 
 function openConnectionDialog(id) {
@@ -1049,7 +1049,7 @@ function wireDialogs() {
   $("#newConnectionBtn").addEventListener("click", function () { openConnectionDialog(0); });
   $("#connectionForm").addEventListener("submit", saveConnection);
   $("#connectionForm").elements.auth_type.addEventListener("change", updateAuthFields);
-  $$(".close-dialog").forEach(function (btn) {
+  all(".close-dialog").forEach(function (btn) {
     btn.addEventListener("click", function () { $("#connectionDialog").close(); });
   });
   $("#deleteConnectionBtn").addEventListener("click", deleteConnection);
