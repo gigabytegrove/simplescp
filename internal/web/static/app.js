@@ -7,7 +7,9 @@ const state = {
     left: { connectionId: 0, path: "/", selected: [] },
     right: { connectionId: 0, path: "/", selected: [] }
   },
-  pendingTrust: null
+  pendingTrust: null,
+  activePane: "left",
+  activity: []
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -99,6 +101,114 @@ function connectionById(id) {
   return state.connections.find(function (c) { return Number(c.id) === Number(id); });
 }
 
+function setActivePane(side) {
+  state.activePane = side;
+  $(".file-pane").forEach(function (pane) {
+    pane.classList.toggle("active-pane", pane.dataset.pane === side);
+  });
+}
+
+function renderBreadcrumbs(side) {
+  const pane = state.panes[side];
+  const el = paneElement(side);
+  const host = $(".breadcrumbs", el);
+  if (!host) return;
+
+  const parts = normalizePath(pane.path).split("/").filter(Boolean);
+  const crumbs = [{ label: "/", path: "/" }];
+  let current = "";
+  parts.forEach(function (part) {
+    current += "/" + part;
+    crumbs.push({ label: part, path: current });
+  });
+
+  host.innerHTML = crumbs.map(function (crumb, index) {
+    const last = index === crumbs.length - 1;
+    return '<button type="button" class="breadcrumb' + (last ? " current" : "") + '" data-path="' + escapeHTML(crumb.path) + '">' +
+      escapeHTML(crumb.label) + '</button>' + (last ? "" : '<span class="breadcrumb-sep">›</span>');
+  }).join("");
+
+  $(".breadcrumb", host).forEach(function (button) {
+    button.addEventListener("click", function () {
+      pane.path = button.dataset.path;
+      loadPane(side);
+    });
+  });
+}
+
+function fileKind(name, isDir) {
+  if (isDir) return { icon: "▰", kind: "folder" };
+  const lower = String(name || "").toLowerCase();
+  const ext = lower.includes(".") ? lower.split(".").pop() : "";
+  if (["jpg","jpeg","png","gif","webp","svg","bmp","ico"].includes(ext)) return { icon: "▧", kind: "image" };
+  if (["zip","tar","gz","tgz","bz2","xz","7z","rar"].includes(ext)) return { icon: "▤", kind: "archive" };
+  if (["js","ts","go","py","php","rb","rs","java","c","cpp","h","css","html","json","yaml","yml","xml","sh"].includes(ext)) return { icon: "‹›", kind: "code" };
+  if (["mp3","wav","flac","aac","ogg","m4a"].includes(ext)) return { icon: "♪", kind: "audio" };
+  if (["mp4","mkv","mov","avi","webm","m4v"].includes(ext)) return { icon: "▶", kind: "video" };
+  if (["pdf","doc","docx","txt","md","rtf","odt","xls","xlsx","csv"].includes(ext)) return { icon: "≡", kind: "document" };
+  return { icon: "•", kind: "file" };
+}
+
+function filterPane(side, query) {
+  const q = String(query || "").trim().toLowerCase();
+  const el = paneElement(side);
+  let visible = 0;
+  $(".entry-row", el).forEach(function (row) {
+    const show = !q || String(row.dataset.name || "").toLowerCase().includes(q);
+    row.hidden = !show;
+    if (show) visible++;
+  });
+  el.classList.toggle("filtering", Boolean(q));
+  const counter = $(".filter-count", el);
+  if (counter) counter.textContent = q ? visible + " shown" : "";
+}
+
+function addActivity(type, title, detail, status) {
+  const item = {
+    id: Date.now() + Math.random(),
+    type: type,
+    title: title,
+    detail: detail || "",
+    status: status || "success",
+    time: new Date()
+  };
+  state.activity.unshift(item);
+  state.activity = state.activity.slice(0, 30);
+  renderActivity();
+  return item.id;
+}
+
+function updateActivity(id, status, detail) {
+  const item = state.activity.find(function (entry) { return entry.id === id; });
+  if (!item) return;
+  item.status = status;
+  if (detail) item.detail = detail;
+  renderActivity();
+}
+
+function renderActivity() {
+  const list = $("#activityList");
+  const summary = $("#activitySummary");
+  if (!list || !summary) return;
+
+  if (!state.activity.length) {
+    summary.textContent = "No recent transfers";
+    list.innerHTML = '<div class="activity-empty">Uploads, copies, deletes and connection activity will appear here.</div>';
+    return;
+  }
+
+  const active = state.activity.filter(function (item) { return item.status === "busy"; }).length;
+  summary.textContent = active ? active + " operation" + (active === 1 ? "" : "s") + " running" : state.activity.length + " recent operation" + (state.activity.length === 1 ? "" : "s");
+
+  list.innerHTML = state.activity.map(function (item) {
+    return '<div class="activity-item ' + escapeHTML(item.status) + '">' +
+      '<span class="activity-status-icon">' + (item.status === "busy" ? "↻" : item.status === "error" ? "!" : "✓") + '</span>' +
+      '<div class="activity-copy"><strong>' + escapeHTML(item.title) + '</strong><span>' + escapeHTML(item.detail) + '</span></div>' +
+      '<time>' + item.time.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + '</time>' +
+      '</div>';
+  }).join("");
+}
+
 function paneElement(side) {
   return document.querySelector('.file-pane[data-pane="' + side + '"]');
 }
@@ -188,6 +298,7 @@ async function loadPane(side) {
   const tbody = $(".file-list", el);
   $(".path-input", el).value = pane.path;
   pane.selected = [];
+  renderBreadcrumbs(side);
   updatePaneSelection(side);
 
   if (!pane.connectionId) {
@@ -204,7 +315,9 @@ async function loadPane(side) {
       const data = await api("/api/connections/" + pane.connectionId + "/list?path=" + encodeURIComponent(pane.path));
       pane.path = data.path;
       $(".path-input", el).value = pane.path;
+      renderBreadcrumbs(side);
       renderEntries(side, data.entries || []);
+      filterPane(side, $(".pane-search", el)?.value || "");
       setStatus("Ready", "ready");
     });
   } catch (err) {
@@ -229,15 +342,19 @@ function renderEntries(side, entries) {
   });
 
   tbody.innerHTML = entries.map(function (entry) {
+    const kind = fileKind(entry.name, entry.is_dir);
     return '<tr class="entry-row" data-path="' + escapeHTML(entry.path) + '" data-name="' + escapeHTML(entry.name) + '" data-dir="' + (entry.is_dir ? "1" : "0") + '" data-size="' + entry.size + '">' +
-      '<td><div class="file-name"><span class="file-icon">' + (entry.is_dir ? "▸" : "•") + '</span><span class="file-name-text">' + escapeHTML(entry.name) + '</span></div></td>' +
+      '<td><div class="file-name"><span class="file-icon file-kind-' + kind.kind + '">' + kind.icon + '</span><span class="file-name-text">' + escapeHTML(entry.name) + '</span></div></td>' +
       '<td>' + (entry.is_dir ? "—" : bytes(entry.size)) + '</td>' +
       '<td>' + new Date(entry.mod_time).toLocaleString() + '</td>' +
       '</tr>';
   }).join("");
 
   $$(".entry-row", tbody).forEach(function (row) {
-    row.addEventListener("click", function (event) { selectEntry(side, row, event.ctrlKey || event.metaKey); });
+    row.addEventListener("click", function (event) {
+      setActivePane(side);
+      selectEntry(side, row, event.ctrlKey || event.metaKey);
+    });
     row.addEventListener("dblclick", function () {
       if (row.dataset.dir === "1") {
         state.panes[side].path = row.dataset.path;
@@ -294,8 +411,9 @@ function updatePaneSelection(side) {
 }
 
 function wirePanes() {
-  $$(".file-pane").forEach(function (el) {
+  $(".file-pane").forEach(function (el) {
     const side = el.dataset.pane;
+    el.addEventListener("pointerdown", function () { setActivePane(side); });
 
     $(".server-select", el).addEventListener("change", function (e) {
       const id = Number(e.target.value);
@@ -354,6 +472,7 @@ function wirePanes() {
     $(".download-btn", el).addEventListener("click", function () { downloadSelected(side); });
     $(".delete-btn", el).addEventListener("click", function () { deleteSelected(side); });
     $(".copy-to-other", el).addEventListener("click", function () { copySelected(side); });
+    $(".pane-search", el).addEventListener("input", function (e) { filterPane(side, e.target.value); });
   });
 }
 
@@ -363,15 +482,18 @@ async function uploadFiles(side, files) {
   const form = new FormData();
   files.forEach(function (f) { form.append("files", f, f.name); });
   setStatus("Uploading " + files.length + " file" + (files.length === 1 ? "" : "s") + "…", "busy");
+  const activityId = addActivity("upload", "Upload", files.length + " file" + (files.length === 1 ? "" : "s") + " to " + pane.path, "busy");
   try {
     await withTrustRetry(side, function () {
       return api("/api/connections/" + pane.connectionId + "/upload?path=" + encodeURIComponent(pane.path), { method: "POST", body: form });
     });
     toast("Upload complete.", "success");
     setStatus("Upload complete", "success");
+    updateActivity(activityId, "success", files.length + " file" + (files.length === 1 ? "" : "s") + " uploaded to " + pane.path);
     await loadPane(side);
   } catch (err) {
     setStatus("Upload failed", "error");
+    updateActivity(activityId, "error", err.message);
     toast(err.message, "error");
   } finally {
     $(".upload-input", paneElement(side)).value = "";
@@ -435,6 +557,7 @@ async function deleteSelected(side) {
   if (!confirm("Delete " + label + "? Folders will be removed recursively.")) return;
   try {
     setStatus("Deleting " + selected.length + " item" + (selected.length === 1 ? "" : "s") + "…", "busy");
+    const activityId = addActivity("delete", "Delete", selected.length + " item" + (selected.length === 1 ? "" : "s") + " from " + pane.path, "busy");
     for (const item of selected) {
       await api("/api/connections/" + pane.connectionId + "/delete", {
         method: "POST",
@@ -443,6 +566,7 @@ async function deleteSelected(side) {
     }
     toast("Deleted " + selected.length + " item" + (selected.length === 1 ? "" : "s") + ".", "success");
     setStatus("Delete complete", "success");
+    updateActivity(activityId, "success", selected.length + " item" + (selected.length === 1 ? "" : "s") + " deleted from " + pane.path);
     await loadPane(side);
   } catch (err) {
     setStatus("Delete failed", "error");
@@ -457,6 +581,9 @@ async function copySelected(side) {
   const selected = source.selected.slice();
   if (!selected.length || selected.some(function (item) { return item.isDir; }) || !destination.connectionId) return;
   setStatus("Copying " + selected.length + " file" + (selected.length === 1 ? "" : "s") + "…", "busy");
+  const sourceConnection = connectionById(source.connectionId);
+  const destinationConnection = connectionById(destination.connectionId);
+  const activityId = addActivity("copy", "Server-to-server copy", selected.length + " file" + (selected.length === 1 ? "" : "s") + " · " + (sourceConnection ? sourceConnection.name : "source") + " → " + (destinationConnection ? destinationConnection.name : "destination"), "busy");
 
   try {
     for (const item of selected) {
@@ -472,9 +599,11 @@ async function copySelected(side) {
     }
     toast("Copied " + selected.length + " file" + (selected.length === 1 ? "" : "s") + ".", "success");
     setStatus("Transfer complete", "success");
+    updateActivity(activityId, "success", selected.length + " file" + (selected.length === 1 ? "" : "s") + " copied successfully");
     await loadPane(destinationSide);
   } catch (err) {
     setStatus("Transfer failed", "error");
+    updateActivity(activityId, "error", err.message);
     toast(err.message, "error");
   }
 }
@@ -600,8 +729,56 @@ async function logout() {
   }
 }
 
+function wirePremiumControls() {
+  setActivePane("left");
+
+  $("#activityToggle")?.addEventListener("click", function () {
+    const drawer = $("#activityDrawer");
+    const collapsed = drawer.classList.toggle("collapsed");
+    this.setAttribute("aria-expanded", String(!collapsed));
+  });
+
+  $("#clearActivity")?.addEventListener("click", function () {
+    state.activity = state.activity.filter(function (item) { return item.status === "busy"; });
+    renderActivity();
+  });
+
+  document.addEventListener("keydown", function (event) {
+    const target = event.target;
+    const typing = target && ["INPUT","TEXTAREA","SELECT"].includes(target.tagName);
+    const side = state.activePane;
+    const pane = paneElement(side);
+
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+      event.preventDefault();
+      $(".pane-search", pane)?.focus();
+      $(".pane-search", pane)?.select();
+      return;
+    }
+
+    if (typing) return;
+
+    if (event.key === "F5") {
+      event.preventDefault();
+      loadPane(side);
+    } else if (event.altKey && event.key === "ArrowUp") {
+      event.preventDefault();
+      state.panes[side].path = parentPath(state.panes[side].path);
+      loadPane(side);
+    } else if (event.key === "Delete" && state.panes[side].selected.length) {
+      event.preventDefault();
+      deleteSelected(side);
+    } else if (event.key === "Escape") {
+      state.panes[side].selected = [];
+      $(".entry-row", pane).forEach(function (row) { row.classList.remove("selected"); });
+      updatePaneSelection(side);
+    }
+  });
+}
+
 document.addEventListener("DOMContentLoaded", async function () {
   wirePanes();
+  wirePremiumControls();
   wireDialogs();
   $("#logoutBtn").addEventListener("click", logout);
   $("#refreshConnections").addEventListener("click", loadConnections);
