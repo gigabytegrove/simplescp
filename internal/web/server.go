@@ -2,7 +2,10 @@ package web
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
 	"path"
@@ -30,7 +34,9 @@ type app struct {
 	store     *store.Store
 	logger    *slog.Logger
 	templates *template.Template
-	mux       *http.ServeMux
+	mux          *http.ServeMux
+	loginLimiter *loginLimiter
+	transferSem  chan struct{}
 }
 
 type ctxKey string
@@ -39,9 +45,17 @@ const sessionKey ctxKey = "session"
 func New(cfg config.Config, db *store.Store, logger *slog.Logger) (http.Handler, error) {
 	t, err := template.ParseFS(assets, "templates/*.html")
 	if err != nil { return nil, fmt.Errorf("parse templates: %w", err) }
-	a := &app{cfg:cfg,store:db,logger:logger,templates:t,mux:http.NewServeMux()}
+	a := &app{
+		cfg:cfg,
+		store:db,
+		logger:logger,
+		templates:t,
+		mux:http.NewServeMux(),
+		loginLimiter:newLoginLimiter(cfg.LoginMaxAttempts, cfg.LoginWindow),
+		transferSem:make(chan struct{}, cfg.MaxConcurrentTransfers),
+	}
 	a.routes()
-	return a.securityHeaders(a.sessionMiddleware(a.mux)), nil
+	return a.securityHeaders(a.sameOrigin(a.sessionMiddleware(a.mux))), nil
 }
 
 func (a *app) routes() {
@@ -73,9 +87,79 @@ func (a *app) securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'")
+		if !strings.HasPrefix(r.URL.Path, "/static/") {
+			w.Header().Set("Cache-Control", "no-store")
+			w.Header().Set("Pragma", "no-cache")
+		}
+		if a.cfg.CookieSecure {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		next.ServeHTTP(w,r)
 	})
+}
+
+func (a *app) sameOrigin(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		check := func(raw string) bool {
+			if strings.TrimSpace(raw) == "" {
+				return true
+			}
+			u, err := url.Parse(raw)
+			if err != nil || u.Host == "" {
+				return false
+			}
+			return strings.EqualFold(u.Host, r.Host)
+		}
+
+		if !check(r.Header.Get("Origin")) || !check(r.Header.Get("Referer")) {
+			writeError(w, http.StatusForbidden, "cross-origin request rejected")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func randomWebToken(size int) (string, error) {
+	buf := make([]byte, size)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+func clientIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil && host != "" {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+func secureEqual(a, b string) bool {
+	if len(a) == 0 || len(a) != len(b) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
+}
+
+func (a *app) acquireTransfer(r *http.Request) bool {
+	select {
+	case a.transferSem <- struct{}{}:
+		return true
+	case <-r.Context().Done():
+		return false
+	}
+}
+
+func (a *app) releaseTransfer() {
+	<-a.transferSem
 }
 
 func (a *app) sessionMiddleware(next http.Handler) http.Handler {
@@ -112,7 +196,7 @@ func (a *app) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 func (a *app) requireCSRF(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		sess, ok := sessionFrom(r)
-		if !ok || r.Header.Get("X-CSRF-Token") == "" || r.Header.Get("X-CSRF-Token") != sess.CSRFToken {
+		if !ok || !secureEqual(r.Header.Get("X-CSRF-Token"), sess.CSRFToken) {
 			writeError(w,http.StatusForbidden,"invalid CSRF token")
 			return
 		}
@@ -122,26 +206,67 @@ func (a *app) requireCSRF(next http.HandlerFunc) http.HandlerFunc {
 
 func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := sessionFrom(r); ok {
-		http.Redirect(w,r,"/",http.StatusSeeOther); return
+		http.Redirect(w,r,"/",http.StatusSeeOther)
+		return
 	}
+	token, err := randomWebToken(24)
+	if err != nil {
+		http.Error(w, "Unable to initialize login", http.StatusInternalServerError)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:"simplescp_login_csrf", Value:token, Path:"/login",
+		MaxAge:600, HttpOnly:true, Secure:a.cfg.CookieSecure, SameSite:http.SameSiteStrictMode,
+	})
 	w.Header().Set("Content-Type","text/html; charset=utf-8")
-	_ = a.templates.ExecuteTemplate(w,"login.html",nil)
+	_ = a.templates.ExecuteTemplate(w,"login.html",map[string]any{"CSRF":token})
 }
 
 func (a *app) login(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil { http.Error(w,"Bad request",http.StatusBadRequest); return }
-	u, err := a.store.Authenticate(r.FormValue("username"),r.FormValue("password"))
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w,"Bad request",http.StatusBadRequest)
+		return
+	}
+
+	csrfCookie, err := r.Cookie("simplescp_login_csrf")
+	if err != nil || !secureEqual(csrfCookie.Value, r.FormValue("csrf_token")) {
+		writeError(w, http.StatusForbidden, "invalid login request")
+		return
+	}
+
+	username := strings.TrimSpace(r.FormValue("username"))
+	limitKey := clientIP(r) + "\x00" + strings.ToLower(username)
+	if !a.loginLimiter.allow(limitKey, time.Now()) {
+		w.Header().Set("Retry-After", strconv.FormatInt(int64(a.cfg.LoginWindow.Seconds()), 10))
+		http.Error(w, "Too many login attempts", http.StatusTooManyRequests)
+		return
+	}
+
+	u, err := a.store.Authenticate(username,r.FormValue("password"))
 	if err != nil {
 		time.Sleep(350*time.Millisecond)
 		w.Header().Set("Content-Type","text/html; charset=utf-8")
 		w.WriteHeader(http.StatusUnauthorized)
-		_ = a.templates.ExecuteTemplate(w,"login.html",map[string]any{"Error":"Invalid username or password."})
+		_ = a.templates.ExecuteTemplate(w,"login.html",map[string]any{
+			"Error":"Invalid username or password.",
+			"CSRF":csrfCookie.Value,
+		})
 		return
 	}
+	a.loginLimiter.reset(limitKey)
+
 	token, _, expires, err := a.store.CreateSession(u.ID,a.cfg.SessionTTL)
-	if err != nil { http.Error(w,"Unable to create session",http.StatusInternalServerError); return }
+	if err != nil {
+		http.Error(w,"Unable to create session",http.StatusInternalServerError)
+		return
+	}
 	http.SetCookie(w,&http.Cookie{
-		Name:"simplescp_session",Value:token,Path:"/",Expires:expires,HttpOnly:true,
+		Name:"simplescp_login_csrf",Value:"",Path:"/login",MaxAge:-1,HttpOnly:true,
+		Secure:a.cfg.CookieSecure,SameSite:http.SameSiteStrictMode,
+	})
+	http.SetCookie(w,&http.Cookie{
+		Name:"simplescp_session",Value:token,Path:"/",Expires:expires,MaxAge:int(a.cfg.SessionTTL.Seconds()),HttpOnly:true,
 		Secure:a.cfg.CookieSecure,SameSite:http.SameSiteStrictMode,
 	})
 	http.Redirect(w,r,"/",http.StatusSeeOther)
@@ -299,6 +424,9 @@ func (a *app) deleteRemote(w http.ResponseWriter,r *http.Request) {
 }
 
 func (a *app) uploadRemote(w http.ResponseWriter,r *http.Request) {
+	if !a.acquireTransfer(r) { writeError(w,499,"request canceled"); return }
+	defer a.releaseTransfer()
+	r.Body = http.MaxBytesReader(w, r.Body, a.cfg.MaxUploadBytes)
 	id,err:=parseID(r); if err!=nil { writeError(w,400,"invalid connection id"); return }
 	target:=sshclient.CleanRemote(r.URL.Query().Get("path"))
 	client,err:=a.dialConnection(r,id); if err!=nil { sshError(w,err); return }; defer client.Close()
@@ -315,7 +443,14 @@ func (a *app) uploadRemote(w http.ResponseWriter,r *http.Request) {
 		if err!=nil { part.Close(); sshError(w,err); return }
 		n,copyErr:=io.Copy(dst,part)
 		closeErr:=dst.Close(); part.Close()
-		if copyErr!=nil { sshError(w,copyErr); return }
+		if copyErr!=nil {
+			if strings.Contains(copyErr.Error(), "request body too large") {
+				writeError(w,http.StatusRequestEntityTooLarge,"upload exceeds configured size limit")
+				return
+			}
+			sshError(w,copyErr)
+			return
+		}
 		if closeErr!=nil { sshError(w,closeErr); return }
 		uploaded=append(uploaded,map[string]any{"name":name,"bytes":n})
 	}
@@ -323,6 +458,8 @@ func (a *app) uploadRemote(w http.ResponseWriter,r *http.Request) {
 }
 
 func (a *app) downloadRemote(w http.ResponseWriter,r *http.Request) {
+	if !a.acquireTransfer(r) { writeError(w,499,"request canceled"); return }
+	defer a.releaseTransfer()
 	id,err:=parseID(r); if err!=nil { writeError(w,400,"invalid connection id"); return }
 	remotePath:=r.URL.Query().Get("path"); if remotePath=="" { writeError(w,400,"path is required"); return }
 	client,err:=a.dialConnection(r,id); if err!=nil { sshError(w,err); return }; defer client.Close()
@@ -341,6 +478,8 @@ type transferRequest struct {
 	DestinationPath string `json:"destination_path"`
 }
 func (a *app) transferRemote(w http.ResponseWriter,r *http.Request) {
+	if !a.acquireTransfer(r) { writeError(w,499,"request canceled"); return }
+	defer a.releaseTransfer()
 	var in transferRequest
 	if decodeJSON(r,&in)!=nil || in.SourceConnectionID<=0 || in.DestinationConnectionID<=0 || in.SourcePath=="" || in.DestinationPath=="" {
 		writeError(w,400,"source and destination connection/path are required"); return
