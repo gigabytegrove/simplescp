@@ -267,3 +267,12 @@ dialog form{padding:0 20px}
 .empty-pane-message strong,.empty-pane-message span{display:block}
 .empty-pane-message strong{color:var(--text-soft);font-size:.78rem;margin-bottom:4px}
 .empty-pane-message span{color:var(--muted-2);font-size:.7rem}
+
+.file-pane{position:relative}
+.file-pane.drag-active{border-color:#4f78ad;box-shadow:inset 0 0 0 1px rgba(79,140,255,.18)}
+.file-pane.drag-active::after{
+  content:"Drop files to upload";
+  position:absolute;inset:54px 12px 54px;z-index:12;display:grid;place-items:center;
+  border:1px dashed #4f78ad;border-radius:9px;background:rgba(10,17,25,.94);
+  color:#a9c8ff;font-size:.82rem;font-weight:800;letter-spacing:.01em;pointer-events:none
+}
