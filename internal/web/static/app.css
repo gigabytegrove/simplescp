@@ -138,13 +138,17 @@ small{font-weight:500;color:var(--muted);line-height:1.45}
   border:1px solid transparent;border-radius:10px;padding:10px;background:transparent;transition:background .13s,border-color .13s
 }
 .connection-card:hover{border-color:var(--line);background:var(--surface)}
-.connection-card .name{display:flex;align-items:center;gap:6px;font-size:.83rem;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.connection-card-top{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.connection-card .name{display:flex;align-items:center;gap:6px;min-width:0;font-size:.83rem;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.connection-state{flex:0 0 auto;padding:3px 5px;border:1px solid #4d4029;border-radius:999px;color:#c8a968;background:#1a160f;font-size:.53rem;font-weight:800;text-transform:uppercase;letter-spacing:.04em}
+.connection-state.trusted{border-color:#285744;background:var(--success-soft);color:#7ce0bb}
 .connection-card .meta{font-size:.68rem;color:var(--muted);margin:5px 0 0 13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:"SFMono-Regular",Consolas,monospace}
 .connection-actions{display:grid;grid-template-columns:1fr 1fr auto;gap:5px;margin-top:9px}
 .connection-actions button{padding:5px 6px;font-size:.64rem}
 .trust-dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex:0 0 auto;background:#7a633d}
 .trust-dot.trusted{background:var(--success);box-shadow:0 0 0 3px rgba(66,211,157,.08)}
 .empty-state{padding:24px 12px;border:1px dashed var(--line);border-radius:10px;color:var(--muted);font-size:.76rem;line-height:1.55;text-align:center}
+.empty-state strong,.empty-state span{display:block}.empty-state strong{color:var(--text-soft);font-size:.8rem;margin-bottom:4px}.empty-state span{color:var(--muted)}
 .sidebar-footer{display:flex;align-items:center;gap:7px;margin-top:auto;padding:13px 6px 2px;border-top:1px solid var(--line);font-size:.62rem;color:var(--muted-2)}
 
 .workspace{min-width:0;padding:22px}
@@ -259,3 +263,7 @@ dialog form{padding:0 20px}
   td:first-child,th:first-child{width:72%}
   td:nth-child(2),th:nth-child(2){width:28%}
 }
+
+.empty-pane-message strong,.empty-pane-message span{display:block}
+.empty-pane-message strong{color:var(--text-soft);font-size:.78rem;margin-bottom:4px}
+.empty-pane-message span{color:var(--muted-2);font-size:.7rem}
