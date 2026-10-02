@@ -26,8 +26,9 @@ function toast(message, type) {
 function setStatus(message, type) {
   const el = $("#status");
   if (!el) return;
-  el.textContent = message;
   el.className = "status " + (type || "ready");
+  el.innerHTML = '<span class="status-dot"></span><span></span>';
+  el.lastElementChild.textContent = message;
 }
 
 async function api(url, options) {
@@ -112,17 +113,21 @@ async function loadConnections() {
 function renderConnections() {
   const host = $("#connectionsList");
   if (!state.connections.length) {
-    host.innerHTML = '<div class="empty-state">No saved servers yet. Add a connection to start browsing and transferring files.</div>';
+    host.innerHTML = '<div class="empty-state"><strong>No saved servers</strong><span>Add your first SSH connection to start browsing remote files.</span></div>';
     return;
   }
   host.innerHTML = state.connections.map(function (c) {
+    const trusted = Boolean(c.host_key_fingerprint);
     return '<div class="connection-card" data-id="' + c.id + '">' +
-      '<div class="name"><span class="trust-dot ' + (c.host_key_fingerprint ? "trusted" : "") + '"></span>' + escapeHTML(c.name) + '</div>' +
+      '<div class="connection-card-top">' +
+        '<div class="name"><span class="trust-dot ' + (trusted ? "trusted" : "") + '"></span>' + escapeHTML(c.name) + '</div>' +
+        '<span class="connection-state ' + (trusted ? "trusted" : "") + '">' + (trusted ? "Verified" : "Unverified") + '</span>' +
+      '</div>' +
       '<div class="meta">' + escapeHTML(c.username) + '@' + escapeHTML(c.host) + ':' + c.port + '</div>' +
       '<div class="connection-actions">' +
       '<button data-action="left">Open left</button>' +
       '<button data-action="right">Open right</button>' +
-      '<button data-action="edit">Edit</button>' +
+      '<button data-action="edit" title="Edit connection" aria-label="Edit connection">•••</button>' +
       '</div></div>';
   }).join("");
 
@@ -186,7 +191,7 @@ async function loadPane(side) {
   updatePaneSelection(side);
 
   if (!pane.connectionId) {
-    tbody.innerHTML = '<tr><td colspan="3" class="muted">Choose a saved server.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="3" class="muted empty-pane-message"><strong>No server open</strong><span>Choose a saved server above or open one from the sidebar.</span></td></tr>';
     return;
   }
 
@@ -214,7 +219,7 @@ function renderEntries(side, entries) {
   const tbody = $(".file-list", el);
 
   if (!entries.length) {
-    tbody.innerHTML = '<tr><td colspan="3" class="muted">This folder is empty.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="3" class="muted empty-pane-message"><strong>This folder is empty</strong><span>Upload a file or create a new folder here.</span></td></tr>';
     return;
   }
 
@@ -225,7 +230,7 @@ function renderEntries(side, entries) {
 
   tbody.innerHTML = entries.map(function (entry) {
     return '<tr class="entry-row" data-path="' + escapeHTML(entry.path) + '" data-name="' + escapeHTML(entry.name) + '" data-dir="' + (entry.is_dir ? "1" : "0") + '" data-size="' + entry.size + '">' +
-      '<td><div class="file-name"><span class="file-icon">' + (entry.is_dir ? "▰" : "·") + '</span><span class="file-name-text">' + escapeHTML(entry.name) + '</span></div></td>' +
+      '<td><div class="file-name"><span class="file-icon">' + (entry.is_dir ? "▸" : "•") + '</span><span class="file-name-text">' + escapeHTML(entry.name) + '</span></div></td>' +
       '<td>' + (entry.is_dir ? "—" : bytes(entry.size)) + '</td>' +
       '<td>' + new Date(entry.mod_time).toLocaleString() + '</td>' +
       '</tr>';
