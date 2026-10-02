@@ -9,24 +9,40 @@
 <body class="auth-body">
   <main class="auth-shell">
     <section class="auth-brand">
-      <div class="brand-mark">S</div>
-      <div>
-        <h1>SimpleSCP</h1>
-        <p>Secure multi-server file transfer from your browser.</p>
+      <div class="auth-brand-top">
+        <div class="brand-mark">S</div>
+        <div class="auth-wordmark">
+          <strong>SimpleSCP</strong>
+          <span>Secure remote file transfer</span>
+        </div>
+      </div>
+      <div class="auth-pitch">
+        <span class="eyebrow">ONE WORKSPACE. MULTIPLE SERVERS.</span>
+        <h1>Your servers,<br>side by side.</h1>
+        <p>Save SSH connections, browse remote filesystems and move files directly between servers from a focused web interface.</p>
+      </div>
+      <div class="auth-security">
+        <div><span>✓</span><strong>Encrypted credentials</strong></div>
+        <div><span>✓</span><strong>Pinned SSH host keys</strong></div>
+        <div><span>✓</span><strong>Self-hosted</strong></div>
       </div>
     </section>
-    <form class="auth-card" action="/login" method="post" autocomplete="on">
-      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
-      <div>
-        <span class="eyebrow">WELCOME BACK</span>
-        <h2>Sign in</h2>
-        <p class="muted">Access saved servers and transfer files securely.</p>
-      </div>
-      {{if .Error}}<div class="alert danger">{{.Error}}</div>{{end}}
-      <label>Username<input name="username" autocomplete="username" required autofocus></label>
-      <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
-      <button class="primary full" type="submit">Sign in</button>
-    </form>
+
+    <section class="auth-form-side">
+      <form class="auth-card" action="/login" method="post" autocomplete="on">
+        <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+        <div class="auth-card-head">
+          <span class="eyebrow">WELCOME BACK</span>
+          <h2>Sign in to SimpleSCP</h2>
+          <p>Use your SimpleSCP account to open the transfer workspace.</p>
+        </div>
+        {{if .Error}}<div class="alert danger">{{.Error}}</div>{{end}}
+        <label>Username<input name="username" autocomplete="username" required autofocus placeholder="Username"></label>
+        <label>Password<input type="password" name="password" autocomplete="current-password" required placeholder="Password"></label>
+        <button class="primary full" type="submit">Sign in</button>
+        <div class="auth-footnote">Sessions are protected with HttpOnly, SameSite cookies and CSRF validation.</div>
+      </form>
+    </section>
   </main>
 </body>
 </html>
