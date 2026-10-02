@@ -91,7 +91,7 @@ Back up both the persistent /data volume and the exact SIMPLE_SCP_MASTER_KEY. A 
 
 ## Development
 
-Requires Go 1.25 or newer.
+Requires Go 1.27.1 or newer.
 
 Run:
 
