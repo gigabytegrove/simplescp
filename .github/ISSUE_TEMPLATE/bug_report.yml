@@ -1,0 +1,47 @@
+name: Bug report
+description: Report a reproducible non-security bug
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. **Do not use this form for security vulnerabilities or secrets.** Use the private reporting process in SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: SimpleSCP version
+      placeholder: latest, release tag, or commit SHA
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Docker/Compose version, OS, architecture, reverse proxy, browser if relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Remove credentials, tokens, private keys, internal addresses, and other sensitive data.
