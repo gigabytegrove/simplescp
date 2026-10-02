@@ -34,12 +34,27 @@ mkdir -p simplescp
 cd simplescp
 ```
 
-Download the Compose file and example environment:
+Download `docker-compose.yml` and `.env.example` from the repository into that directory, then rename `.env.example` to `.env`.
+
+For an authenticated command-line download from the current private repository:
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/gigabytegrove/simplescp/main/docker-compose.yml
-curl -fsSL https://raw.githubusercontent.com/gigabytegrove/simplescp/main/.env.example -o .env
+export GITHUB_TOKEN="YOUR_GITHUB_TOKEN"
+
+curl -fsSL \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github.raw+json" \
+  https://api.github.com/repos/gigabytegrove/simplescp/contents/docker-compose.yml \
+  -o docker-compose.yml
+
+curl -fsSL \
+  -H "Authorization: Bearer $GITHUB_TOKEN" \
+  -H "Accept: application/vnd.github.raw+json" \
+  https://api.github.com/repos/gigabytegrove/simplescp/contents/.env.example \
+  -o .env
 ```
+
+If the repository is made public later, the files can also be downloaded directly without authentication.
 
 Generate a master encryption key:
 
@@ -54,6 +69,14 @@ SIMPLE_SCP_MASTER_KEY=PASTE_THE_GENERATED_KEY_HERE
 SIMPLE_SCP_ADMIN_USER=admin
 SIMPLE_SCP_ADMIN_PASSWORD=SET_A_STRONG_PASSWORD
 ```
+
+If the GHCR package is private, authenticate Docker before the first pull:
+
+```bash
+echo "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+```
+
+The token needs permission to read packages. This login step is not needed if the SimpleSCP package is public.
 
 Start SimpleSCP:
 
