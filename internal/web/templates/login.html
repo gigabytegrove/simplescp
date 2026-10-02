@@ -11,21 +11,37 @@
   <main class="auth-shell">
     <section class="auth-brand">
       <div class="auth-brand-top">
-        <div class="brand-mark">S</div>
+        <div class="brand-mark" aria-hidden="true"><span>⇄</span></div>
         <div class="auth-wordmark">
           <strong>SimpleSCP</strong>
-          <span>Secure remote file transfer</span>
+          <span>REMOTE TRANSFER DESK</span>
         </div>
       </div>
-      <div class="auth-pitch">
-        <span class="eyebrow">ONE WORKSPACE. MULTIPLE SERVERS.</span>
-        <h1>Your servers,<br>side by side.</h1>
-        <p>Save SSH connections, browse remote filesystems and move files directly between servers from a focused web interface.</p>
+
+      <div class="auth-route" aria-hidden="true">
+        <div class="auth-node">
+          <span>A</span>
+          <i></i>
+        </div>
+        <div class="auth-rail">
+          <span></span><b>TRANSFER</b><span></span>
+        </div>
+        <div class="auth-node">
+          <span>B</span>
+          <i></i>
+        </div>
       </div>
+
+      <div class="auth-pitch">
+        <span class="eyebrow">SFTP · SSH · SELF-HOSTED</span>
+        <h1>Move files<br>without the detour.</h1>
+        <p>Keep two remote filesystems in view and transfer directly between them from one focused workspace.</p>
+      </div>
+
       <div class="auth-security">
-        <div><span>✓</span><strong>Encrypted credentials</strong></div>
-        <div><span>✓</span><strong>Pinned SSH host keys</strong></div>
-        <div><span>✓</span><strong>Self-hosted</strong></div>
+        <div><span>01</span><strong>Encrypted secrets</strong></div>
+        <div><span>02</span><strong>Pinned host keys</strong></div>
+        <div><span>03</span><strong>Direct server transfer</strong></div>
       </div>
     </section>
 
@@ -33,15 +49,29 @@
       <form class="auth-card" action="/login" method="post" autocomplete="on">
         <input type="hidden" name="csrf_token" value="{{.CSRF}}">
         <div class="auth-card-head">
-          <span class="eyebrow">WELCOME BACK</span>
-          <h2>Sign in to SimpleSCP</h2>
-          <p>Use your SimpleSCP account to open the transfer workspace.</p>
+          <span class="eyebrow">ACCESS DESK</span>
+          <h2>Sign in</h2>
+          <p>Open your SimpleSCP transfer workspace.</p>
         </div>
+
         {{if .Error}}<div class="alert danger">{{.Error}}</div>{{end}}
-        <label>Username<input name="username" autocomplete="username" required autofocus placeholder="Username"></label>
-        <label>Password<input type="password" name="password" autocomplete="current-password" required placeholder="Password"></label>
-        <button class="primary full" type="submit">Sign in</button>
-        <div class="auth-footnote">Sessions are protected with HttpOnly, SameSite cookies and CSRF validation.</div>
+
+        <label>
+          <span>Username</span>
+          <input name="username" autocomplete="username" required autofocus placeholder="admin">
+        </label>
+
+        <label>
+          <span>Password</span>
+          <input type="password" name="password" autocomplete="current-password" required placeholder="Password">
+        </label>
+
+        <button class="primary full" type="submit">Enter transfer desk <span aria-hidden="true">→</span></button>
+
+        <div class="auth-footnote">
+          <span class="footnote-mark">⌁</span>
+          Session protection uses HttpOnly cookies and CSRF validation.
+        </div>
       </form>
     </section>
   </main>
