@@ -577,7 +577,7 @@ func (a *app) transferRemote(w http.ResponseWriter,r *http.Request) {
 }
 
 func (a *app) updateStatus(w http.ResponseWriter, r *http.Request) {
-	status, err := a.updater.Status(r.Context(), buildinfo.Version)
+	status, err := a.updater.Status(r.Context(), buildinfo.Version, buildinfo.Commit)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -593,7 +593,7 @@ func restartAfterResponse() {
 }
 
 func (a *app) installUpdate(w http.ResponseWriter, r *http.Request) {
-	result, err := a.updater.Install(r.Context())
+	result, err := a.updater.Install(r.Context(), buildinfo.Version)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
