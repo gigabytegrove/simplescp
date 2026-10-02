@@ -31,9 +31,10 @@ type session struct {
 }
 
 type bridge struct {
-	pairCode string
-	mu       sync.Mutex
-	sessions map[string]session
+	pairCode    string
+	mu          sync.Mutex
+	sessions    map[string]session
+	sessionFile string
 }
 
 type rootInfo struct {
@@ -51,10 +52,13 @@ type entryInfo struct {
 }
 
 func main() {
+	sessionFile := bridgeSessionFile()
 	b := &bridge{
-		pairCode: randomCode(),
-		sessions: make(map[string]session),
+		pairCode:    randomCode(),
+		sessions:    make(map[string]session),
+		sessionFile: sessionFile,
 	}
+	b.loadSessions()
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/info", b.info)
@@ -82,6 +86,63 @@ func main() {
 		MaxHeaderBytes:    1 << 20,
 	}
 	log.Fatal(srv.ListenAndServe())
+}
+
+func bridgeSessionFile() string {
+	dir, err := os.UserConfigDir()
+	if err != nil || dir == "" {
+		home, homeErr := os.UserHomeDir()
+		if homeErr != nil || home == "" {
+			return ""
+		}
+		dir = home
+	}
+	dir = filepath.Join(dir, "SimpleSCP")
+	_ = os.MkdirAll(dir, 0o700)
+	return filepath.Join(dir, "local-bridge-sessions.json")
+}
+
+func (b *bridge) loadSessions() {
+	if b.sessionFile == "" {
+		return
+	}
+	data, err := os.ReadFile(b.sessionFile)
+	if err != nil {
+		return
+	}
+	var saved []session
+	if json.Unmarshal(data, &saved) != nil {
+		return
+	}
+	now := time.Now()
+	for _, item := range saved {
+		if item.Token != "" && item.Origin != "" && item.Expiry.After(now) {
+			b.sessions[item.Token] = item
+		}
+	}
+}
+
+func (b *bridge) saveSessionsLocked() {
+	if b.sessionFile == "" {
+		return
+	}
+	now := time.Now()
+	items := make([]session, 0, len(b.sessions))
+	for token, item := range b.sessions {
+		if item.Expiry.After(now) {
+			items = append(items, item)
+		} else {
+			delete(b.sessions, token)
+		}
+	}
+	data, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return
+	}
+	tmp := b.sessionFile + ".tmp"
+	if os.WriteFile(tmp, data, 0o600) == nil {
+		_ = os.Rename(tmp, b.sessionFile)
+	}
 }
 
 func randomCode() string {
@@ -174,6 +235,7 @@ func (b *bridge) pair(w http.ResponseWriter, r *http.Request) {
 	s := session{Token: token, Origin: origin, Expiry: time.Now().Add(30 * 24 * time.Hour)}
 	b.mu.Lock()
 	b.sessions[token] = s
+	b.saveSessionsLocked()
 	b.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -196,6 +258,7 @@ func (b *bridge) auth(next http.HandlerFunc) http.HandlerFunc {
 		s, ok := b.sessions[token]
 		if ok && time.Now().After(s.Expiry) {
 			delete(b.sessions, token)
+			b.saveSessionsLocked()
 			ok = false
 		}
 		b.mu.Unlock()
