@@ -9,6 +9,7 @@ const state = {
   },
   pendingTrust: null,
   activePane: "left",
+  selectionAnchor: { left: null, right: null },
   activity: [],
   actionResolver: null
 };
@@ -345,6 +346,7 @@ async function loadPane(side) {
   const tbody = $(".file-list", el);
   $(".path-input", el).value = pane.path;
   pane.selected = [];
+  state.selectionAnchor[side] = null;
   renderBreadcrumbs(side);
   updatePaneSelection(side);
 
@@ -390,7 +392,7 @@ function renderEntries(side, entries) {
 
   tbody.innerHTML = entries.map(function (entry) {
     const kind = fileKind(entry.name, entry.is_dir);
-    return '<tr class="entry-row" data-path="' + escapeHTML(entry.path) + '" data-name="' + escapeHTML(entry.name) + '" data-dir="' + (entry.is_dir ? "1" : "0") + '" data-size="' + entry.size + '">' +
+    return '<tr class="entry-row" role="row" aria-selected="false" data-path="' + escapeHTML(entry.path) + '" data-name="' + escapeHTML(entry.name) + '" data-dir="' + (entry.is_dir ? "1" : "0") + '" data-size="' + entry.size + '">' +
       '<td><div class="file-name"><span class="file-icon file-kind-' + kind.kind + '">' + kind.icon + '</span><span class="file-name-text">' + escapeHTML(entry.name) + '</span></div></td>' +
       '<td>' + (entry.is_dir ? "—" : bytes(entry.size)) + '</td>' +
       '<td>' + new Date(entry.mod_time).toLocaleString() + '</td>' +
@@ -400,7 +402,7 @@ function renderEntries(side, entries) {
   $$(".entry-row", tbody).forEach(function (row) {
     row.addEventListener("click", function (event) {
       setActivePane(side);
-      selectEntry(side, row, event.ctrlKey || event.metaKey);
+      selectEntry(side, row, event.ctrlKey || event.metaKey, event.shiftKey);
     });
     row.addEventListener("dblclick", function () {
       if (row.dataset.dir === "1") {
@@ -411,28 +413,61 @@ function renderEntries(side, entries) {
   });
 }
 
-function selectEntry(side, row, additive) {
-  const pane = state.panes[side];
-  const item = {
+function rowItem(row) {
+  return {
     path: row.dataset.path,
     name: row.dataset.name,
     isDir: row.dataset.dir === "1",
     size: Number(row.dataset.size || 0)
   };
-  const existing = pane.selected.findIndex(function (entry) { return entry.path === item.path; });
+}
 
-  if (!additive) {
-    pane.selected = [item];
-  } else if (existing >= 0) {
-    pane.selected.splice(existing, 1);
+function syncRowSelection(side) {
+  const selectedPaths = new Set(state.panes[side].selected.map(function (entry) { return entry.path; }));
+  $$(".entry-row", paneElement(side)).forEach(function (row) {
+    row.classList.toggle("selected", selectedPaths.has(row.dataset.path));
+    row.setAttribute("aria-selected", selectedPaths.has(row.dataset.path) ? "true" : "false");
+  });
+}
+
+function selectEntry(side, row, additive, range) {
+  const pane = state.panes[side];
+  const rows = $$(".entry-row", paneElement(side)).filter(function (candidate) { return !candidate.hidden; });
+  const index = rows.indexOf(row);
+  const item = rowItem(row);
+
+  if (range && state.selectionAnchor[side] !== null && index >= 0) {
+    const start = Math.min(state.selectionAnchor[side], index);
+    const end = Math.max(state.selectionAnchor[side], index);
+    const rangeItems = rows.slice(start, end + 1).map(rowItem);
+    if (additive) {
+      const merged = new Map(pane.selected.map(function (entry) { return [entry.path, entry]; }));
+      rangeItems.forEach(function (entry) { merged.set(entry.path, entry); });
+      pane.selected = Array.from(merged.values());
+    } else {
+      pane.selected = rangeItems;
+    }
   } else {
-    pane.selected.push(item);
+    const existing = pane.selected.findIndex(function (entry) { return entry.path === item.path; });
+    if (!additive) {
+      pane.selected = [item];
+    } else if (existing >= 0) {
+      pane.selected.splice(existing, 1);
+    } else {
+      pane.selected.push(item);
+    }
+    state.selectionAnchor[side] = index >= 0 ? index : null;
   }
 
-  const selectedPaths = new Set(pane.selected.map(function (entry) { return entry.path; }));
-  $(".entry-row", paneElement(side)).forEach(function (r) {
-    r.classList.toggle("selected", selectedPaths.has(r.dataset.path));
-  });
+  syncRowSelection(side);
+  updatePaneSelection(side);
+}
+
+function selectAllVisible(side) {
+  const rows = $$(".entry-row", paneElement(side)).filter(function (row) { return !row.hidden; });
+  state.panes[side].selected = rows.map(rowItem);
+  state.selectionAnchor[side] = rows.length ? 0 : null;
+  syncRowSelection(side);
   updatePaneSelection(side);
 }
 
@@ -856,6 +891,12 @@ function wirePremiumControls() {
       return;
     }
 
+    if (!typing && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      selectAllVisible(side);
+      return;
+    }
+
     if (typing) return;
 
     if (event.key === "F5") {
@@ -870,6 +911,7 @@ function wirePremiumControls() {
       deleteSelected(side);
     } else if (event.key === "Escape") {
       state.panes[side].selected = [];
+      state.selectionAnchor[side] = null;
       pane.querySelectorAll(".entry-row").forEach(function (row) { row.classList.remove("selected"); });
       updatePaneSelection(side);
     }
