@@ -521,7 +521,10 @@ function wireDialogs() {
     const pending = state.pendingTrust;
     if (!pending) return;
     try {
-      await api("/api/connections/" + pending.connectionId + "/trust", { method: "POST" });
+      await api("/api/connections/" + pending.connectionId + "/trust", {
+        method: "POST",
+        body: { fingerprint: $("#trustFingerprint").textContent.trim() }
+      });
       $("#trustDialog").close();
       state.pendingTrust = null;
       await loadConnections();
