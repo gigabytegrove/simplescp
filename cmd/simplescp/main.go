@@ -25,6 +25,9 @@ func main() {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
+	if !cfg.CookieSecure {
+		logger.Warn("secure cookies are disabled; do not expose SimpleSCP over an untrusted network without TLS")
+	}
 
 	v, err := vault.New(cfg.MasterKey)
 	if err != nil {
@@ -43,6 +46,7 @@ func main() {
 		logger.Error("admin bootstrap failed", "error", err)
 		os.Exit(1)
 	}
+	db.CleanupSessions()
 
 	app, err := webapp.New(cfg, db, logger)
 	if err != nil {
