@@ -4,229 +4,184 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="csrf-token" content="{{.CSRF}}">
-  <title>SimpleSCP · Transfer Desk</title>
+  <title>SimpleSCP</title>
   <link rel="stylesheet" href="/static/app.css">
   <link rel="stylesheet" href="/static/production.css">
 </head>
-<body class="desk-body">
-  <header class="app-header">
-    <div class="brand">
+<body class="commander-body">
+  <header class="window-bar">
+    <div class="window-title">
       <div class="brand-mark small" aria-hidden="true"><span>⇄</span></div>
-      <div class="brand-copy">
-        <strong>SimpleSCP</strong>
-        <span>REMOTE TRANSFER DESK</span>
-      </div>
+      <strong>SimpleSCP</strong>
     </div>
-
-    <div class="header-center">
-      <div id="status" class="status ready" role="status" aria-live="polite">
-        <span class="status-dot"></span>
-        <span>Ready</span>
-      </div>
+    <div id="status" class="status ready" role="status" aria-live="polite">
+      <span class="status-dot"></span><span>Ready</span>
     </div>
-
-    <div class="top-actions">
-      {{if .IsAdmin}}<button id="updateBtn" class="subtle update-button" type="button" title="SimpleSCP updater">Update · {{.Version}}</button>{{end}}
-      <button id="newConnectionBtn" class="primary">
-        <span class="button-glyph" aria-hidden="true">＋</span>
-        New server
-      </button>
-      <div class="account-chip" title="Signed in user">
-        <span class="account-avatar" aria-hidden="true">{{slice .Username 0 1}}</span>
-        <span>{{.Username}}</span>
-      </div>
-      <button id="logoutBtn" class="icon-btn subtle" title="Sign out" aria-label="Sign out">↪</button>
+    <div class="window-actions">
+      {{if .IsAdmin}}<button id="updateBtn" class="toolbar-button update-button" type="button">Update · {{.Version}}</button>{{end}}
+      <span class="signed-user">{{.Username}}</span>
+      <button id="logoutBtn" class="toolbar-button" type="button">Sign out</button>
     </div>
   </header>
 
-  <main class="app-shell">
-    <aside class="connections-panel" aria-label="Saved servers">
-      <div class="dock-label">
-        <span class="dock-index">01</span>
-        <span>SERVER DOCK</span>
+  <nav class="menu-bar" aria-label="Application menu">
+    <button id="newConnectionBtn" type="button">Session</button>
+    <button id="refreshConnections" type="button">Refresh sessions</button>
+    <span class="menu-spacer"></span>
+    <span class="menu-hint">F5 Refresh · Ctrl+A Select all · Shift Range · Del Delete</span>
+  </nav>
+
+  <section class="session-strip" aria-label="Saved sessions">
+    <div class="session-strip-label">Saved sessions</div>
+    <div id="connectionsList" class="connections-list"></div>
+  </section>
+
+  <main class="commander-shell">
+    <section class="file-pane active-pane" data-pane="left" aria-label="Left file panel">
+      <div class="pane-caption">
+        <span class="pane-letter">L</span>
+        <select class="endpoint-type" aria-label="Left endpoint type">
+          <option value="remote">Remote server</option>
+          <option value="bridge">Local computer</option>
+          <option value="browser">Browser folder</option>
+        </select>
+        <select class="server-select" aria-label="Left remote server"></select>
+        <select class="local-drive-select hidden" aria-label="Left local drive"></select>
+        <button class="local-pair-btn hidden" type="button">Connect local</button>
+        <button class="pane-refresh toolbar-button" type="button" title="Refresh">↻</button>
       </div>
 
-      <div class="sidebar-head">
-        <div>
-          <h2>Connections</h2>
-          <p>Saved SSH endpoints</p>
-        </div>
-        <button id="refreshConnections" class="icon-btn subtle" title="Refresh saved servers" aria-label="Refresh saved servers">↻</button>
+      <div class="pane-path-row">
+        <button class="up-btn toolbar-button" type="button" title="Parent folder">↑</button>
+        <button class="home-btn toolbar-button" type="button" title="Root">⌂</button>
+        <span class="path-prefix">sftp:</span>
+        <input class="path-input" value="/" aria-label="Left path">
+        <button class="go-btn toolbar-button" type="button">Go</button>
       </div>
 
-      <div class="sidebar-note">
-        <span class="shield-icon" aria-hidden="true">⌁</span>
-        <div>
-          <strong>Local vault</strong>
-          <span>Credentials encrypted at rest · host keys pinned</span>
-        </div>
+      <div class="breadcrumbs"></div>
+
+      <div class="file-actions">
+        <button class="upload-btn toolbar-button" type="button">Upload</button>
+        <input class="upload-input" type="file" multiple hidden>
+        <button class="mkdir-btn toolbar-button" type="button">New folder</button>
+        <button class="rename-btn toolbar-button" type="button" disabled>Rename</button>
+        <button class="download-btn toolbar-button" type="button" disabled>Download</button>
+        <button class="delete-btn toolbar-button danger-outline" type="button" disabled>Delete</button>
+        <div class="pane-search-wrap"><span>⌕</span><input class="pane-search" type="search" placeholder="Filter"></div>
       </div>
 
-      <div id="connectionsList" class="connections-list"></div>
-
-      <div class="sidebar-footer">
-        <span class="trust-dot trusted"></span>
-        <span>Pinned SSH identity</span>
-      </div>
-    </aside>
-
-    <section class="workspace">
-      <div class="workspace-head">
-        <div class="workspace-title">
-          <div class="dock-label">
-            <span class="dock-index">02</span>
-            <span>TRANSFER DECK</span>
-          </div>
-          <h1>Two endpoints. One move.</h1>
-          <p>Browse both servers at once, then move files directly between them.</p>
-        </div>
-
-        <div class="route-key" aria-label="Transfer direction">
-          <span class="route-node">A</span>
-          <span class="route-line"><i></i><b>⇄</b><i></i></span>
-          <span class="route-node">B</span>
-        </div>
+      <div class="file-table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead>
+          <tbody class="file-list"></tbody>
+        </table>
       </div>
 
-      <div class="panes" aria-label="Remote file transfer panes">
-        <section class="file-pane" data-pane="left" aria-label="Endpoint A">
-          <div class="pane-head">
-            <div class="pane-identity">
-              <span class="lane-token">A</span>
-              <div>
-                <strong>Endpoint A</strong>
-                <span>Remote filesystem</span>
-              </div>
-            </div>
-            <div class="pane-toolbar">
-              <select class="server-select" aria-label="Endpoint A server"></select>
-              <button class="pane-refresh icon-btn subtle" title="Refresh endpoint A" aria-label="Refresh endpoint A">↻</button>
-            </div>
-          </div>
+      <div class="pane-footer">
+        <span class="selection-text">Nothing selected</span>
+        <button class="copy-to-other transfer-button" type="button" disabled>Copy →</button>
+      </div>
+    </section>
 
-          <div class="pathbar">
-            <button class="up-btn icon-btn" title="Parent folder" aria-label="Parent folder">↑</button>
-            <div class="path-field">
-              <span class="path-prefix">sftp:</span>
-              <input class="path-input" value="/" aria-label="Endpoint A remote path">
-            </div>
-            <button class="go-btn">Open</button>
-          </div>
+    <div class="commander-divider">
+      <button id="copyLeftToRight" type="button" title="Copy left selection to right">→</button>
+      <button id="copyRightToLeft" type="button" title="Copy right selection to left">←</button>
+    </div>
 
-          <div class="breadcrumbs" aria-label="Endpoint A path breadcrumbs"></div>
+    <section class="file-pane" data-pane="right" aria-label="Right file panel">
+      <div class="pane-caption">
+        <span class="pane-letter">R</span>
+        <select class="endpoint-type" aria-label="Right endpoint type">
+          <option value="remote">Remote server</option>
+          <option value="bridge">Local computer</option>
+          <option value="browser">Browser folder</option>
+        </select>
+        <select class="server-select" aria-label="Right remote server"></select>
+        <select class="local-drive-select hidden" aria-label="Right local drive"></select>
+        <button class="local-pair-btn hidden" type="button">Connect local</button>
+        <button class="pane-refresh toolbar-button" type="button" title="Refresh">↻</button>
+      </div>
 
-          <div class="file-actions">
-            <button class="upload-btn primary-soft">↑ Upload</button>
-            <input class="upload-input" type="file" multiple hidden>
-            <button class="mkdir-btn">＋ Folder</button>
-            <span class="action-separator"></span>
-            <button class="rename-btn" disabled>Rename</button>
-            <button class="download-btn" disabled>↓ Download</button>
-            <button class="delete-btn danger-outline" disabled>Delete</button>
-            <div class="pane-search-wrap">
-              <span aria-hidden="true">⌕</span>
-              <input class="pane-search" type="search" placeholder="Filter" aria-label="Filter endpoint A files">
-            </div>
-          </div>
+      <div class="pane-path-row">
+        <button class="up-btn toolbar-button" type="button" title="Parent folder">↑</button>
+        <button class="home-btn toolbar-button" type="button" title="Root">⌂</button>
+        <span class="path-prefix">sftp:</span>
+        <input class="path-input" value="/" aria-label="Right path">
+        <button class="go-btn toolbar-button" type="button">Go</button>
+      </div>
 
-          <div class="file-table-wrap">
-            <table>
-              <thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead>
-              <tbody class="file-list"></tbody>
-            </table>
-          </div>
+      <div class="breadcrumbs"></div>
 
-          <div class="pane-footer">
-            <span class="selection-text">Nothing selected</span>
-            <button class="copy-to-other transfer-button" disabled>
-              Send to B <span aria-hidden="true">→</span>
-            </button>
-          </div>
-        </section>
+      <div class="file-actions">
+        <button class="upload-btn toolbar-button" type="button">Upload</button>
+        <input class="upload-input" type="file" multiple hidden>
+        <button class="mkdir-btn toolbar-button" type="button">New folder</button>
+        <button class="rename-btn toolbar-button" type="button" disabled>Rename</button>
+        <button class="download-btn toolbar-button" type="button" disabled>Download</button>
+        <button class="delete-btn toolbar-button danger-outline" type="button" disabled>Delete</button>
+        <div class="pane-search-wrap"><span>⌕</span><input class="pane-search" type="search" placeholder="Filter"></div>
+      </div>
 
-        <div class="transfer-spine" aria-hidden="true">
-          <span>A</span>
-          <i></i>
-          <b>⇄</b>
-          <i></i>
-          <span>B</span>
-        </div>
+      <div class="file-table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead>
+          <tbody class="file-list"></tbody>
+        </table>
+      </div>
 
-        <section class="file-pane" data-pane="right" aria-label="Endpoint B">
-          <div class="pane-head">
-            <div class="pane-identity">
-              <span class="lane-token">B</span>
-              <div>
-                <strong>Endpoint B</strong>
-                <span>Remote filesystem</span>
-              </div>
-            </div>
-            <div class="pane-toolbar">
-              <select class="server-select" aria-label="Endpoint B server"></select>
-              <button class="pane-refresh icon-btn subtle" title="Refresh endpoint B" aria-label="Refresh endpoint B">↻</button>
-            </div>
-          </div>
-
-          <div class="pathbar">
-            <button class="up-btn icon-btn" title="Parent folder" aria-label="Parent folder">↑</button>
-            <div class="path-field">
-              <span class="path-prefix">sftp:</span>
-              <input class="path-input" value="/" aria-label="Endpoint B remote path">
-            </div>
-            <button class="go-btn">Open</button>
-          </div>
-
-          <div class="breadcrumbs" aria-label="Endpoint B path breadcrumbs"></div>
-
-          <div class="file-actions">
-            <button class="upload-btn primary-soft">↑ Upload</button>
-            <input class="upload-input" type="file" multiple hidden>
-            <button class="mkdir-btn">＋ Folder</button>
-            <span class="action-separator"></span>
-            <button class="rename-btn" disabled>Rename</button>
-            <button class="download-btn" disabled>↓ Download</button>
-            <button class="delete-btn danger-outline" disabled>Delete</button>
-            <div class="pane-search-wrap">
-              <span aria-hidden="true">⌕</span>
-              <input class="pane-search" type="search" placeholder="Filter" aria-label="Filter endpoint B files">
-            </div>
-          </div>
-
-          <div class="file-table-wrap">
-            <table>
-              <thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead>
-              <tbody class="file-list"></tbody>
-            </table>
-          </div>
-
-          <div class="pane-footer">
-            <button class="copy-to-other transfer-button" disabled>
-              <span aria-hidden="true">←</span> Send to A
-            </button>
-            <span class="selection-text">Nothing selected</span>
-          </div>
-        </section>
+      <div class="pane-footer">
+        <button class="copy-to-other transfer-button" type="button" disabled>← Copy</button>
+        <span class="selection-text">Nothing selected</span>
       </div>
     </section>
   </main>
 
+  <footer class="commander-status">
+    <span id="localBridgeStatus">Local Bridge: not connected</span>
+    <span class="status-separator"></span>
+    <span>SimpleSCP {{.Version}}</span>
+  </footer>
+
+  <dialog id="localBridgeDialog" class="local-bridge-dialog">
+    <div class="dialog-head">
+      <div>
+        <span class="eyebrow">LOCAL COMPUTER</span>
+        <h2>Connect this computer</h2>
+        <p>Run SimpleSCP Local Bridge on this computer, then enter the pairing code shown in its window.</p>
+      </div>
+      <button type="button" class="icon-btn local-bridge-close" aria-label="Close">×</button>
+    </div>
+    <div id="localBridgeDetected" class="bridge-detected">Checking for Local Bridge…</div>
+    <label>Pairing code
+      <input id="localBridgeCode" maxlength="8" autocomplete="off" spellcheck="false" placeholder="ABCDEFGH">
+    </label>
+    <div id="localBridgeMessage" class="update-message">The helper runs only on 127.0.0.1 and exposes the drives of this computer after pairing.</div>
+    <div class="bridge-downloads">
+      <a href="https://github.com/gigabytegrove/simplescp/releases/download/edge/simplescp-local-windows-amd64.exe">Windows x64</a>
+      <a href="https://github.com/gigabytegrove/simplescp/releases/download/edge/simplescp-local-windows-arm64.exe">Windows ARM64</a>
+      <a href="https://github.com/gigabytegrove/simplescp/releases/download/edge/simplescp-local-linux-amd64">Linux x64</a>
+      <a href="https://github.com/gigabytegrove/simplescp/releases/download/edge/simplescp-local-darwin-arm64">macOS ARM64</a>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="ghost local-bridge-close">Cancel</button>
+      <button id="pairLocalBridgeBtn" type="button" class="primary">Pair local computer</button>
+    </div>
+  </dialog>
+
   {{if .IsAdmin}}
   <dialog id="updateDialog" class="update-dialog">
     <div class="dialog-head">
-      <div>
-        <span class="eyebrow">IN-CONTAINER UPDATER</span>
-        <h2>SimpleSCP update</h2>
-        <p>Updates are verified, stored in /data, and activated by restarting this same container.</p>
-      </div>
+      <div><span class="eyebrow">UPDATER</span><h2>SimpleSCP update</h2><p>Verified updates are stored in /data and activated inside this container.</p></div>
       <button type="button" class="icon-btn update-close" aria-label="Close">×</button>
     </div>
     <div class="update-status-grid">
       <div><span>Running</span><strong id="updateCurrent">{{.Version}}</strong></div>
-      <div><span>Latest release</span><strong id="updateLatest">Checking…</strong></div>
+      <div><span>Latest</span><strong id="updateLatest">Checking…</strong></div>
       <div><span>Architecture</span><strong id="updateArch">—</strong></div>
       <div><span>Status</span><strong id="updateState">Not checked</strong></div>
     </div>
-    <div id="updateMessage" class="update-message">Open this panel to check GitHub Releases for a verified update.</div>
+    <div id="updateMessage" class="update-message">Open this panel to check for a verified update.</div>
     <div class="dialog-actions">
       <button id="rollbackUpdateBtn" type="button" class="ghost" disabled>Rollback</button>
       <button type="button" class="ghost update-close">Close</button>
@@ -239,28 +194,24 @@
     <form id="connectionForm" method="dialog">
       <input type="hidden" name="id">
       <div class="dialog-head">
-        <div>
-          <span class="eyebrow">SERVER PROFILE</span>
-          <h2 id="connectionDialogTitle">New connection</h2>
-          <p>Save an SSH endpoint for quick access from the server dock.</p>
-        </div>
+        <div><span class="eyebrow">SESSION</span><h2 id="connectionDialogTitle">New connection</h2><p>Save an SSH/SFTP session.</p></div>
         <button type="button" class="icon-btn close-dialog" aria-label="Close">×</button>
       </div>
       <div class="form-grid">
-        <label class="span-2">Connection name<input name="name" required placeholder="Production web server"></label>
+        <label class="span-2">Session name<input name="name" required placeholder="Production server"></label>
         <label class="span-2">Host<input name="host" required placeholder="server.example.com"></label>
         <label>Port<input name="port" type="number" min="1" max="65535" value="22" required></label>
-        <label>Username<input name="username" required autocomplete="off" placeholder="root"></label>
+        <label>Username<input name="username" required autocomplete="off"></label>
         <label class="span-2">Authentication<select name="auth_type"><option value="password">Password</option><option value="key">SSH private key</option></select></label>
-        <label class="span-2 auth-password">Password<input name="password" type="password" autocomplete="new-password"><small>When editing, leave blank to keep the currently saved password.</small></label>
-        <label class="span-2 auth-key hidden">Private key<textarea name="private_key" rows="7" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea><small>When editing, leave blank to keep the currently saved key.</small></label>
+        <label class="span-2 auth-password">Password<input name="password" type="password" autocomplete="new-password"><small>Leave blank while editing to keep the saved password.</small></label>
+        <label class="span-2 auth-key hidden">Private key<textarea name="private_key" rows="7" spellcheck="false"></textarea><small>Leave blank while editing to keep the saved key.</small></label>
         <label class="span-2 auth-key hidden">Key passphrase<input name="passphrase" type="password" autocomplete="new-password"></label>
-        <label class="span-2">Default path<input name="default_path" value="/" placeholder="/"></label>
+        <label class="span-2">Default remote path<input name="default_path" value="/"></label>
       </div>
       <div class="dialog-actions">
         <button type="button" class="ghost close-dialog">Cancel</button>
-        <button id="deleteConnectionBtn" type="button" class="danger hidden">Delete connection</button>
-        <button type="submit" class="primary">Save connection</button>
+        <button id="deleteConnectionBtn" type="button" class="danger hidden">Delete session</button>
+        <button type="submit" class="primary">Save session</button>
       </div>
     </form>
   </dialog>
@@ -268,75 +219,32 @@
   <dialog id="actionDialog" class="action-dialog">
     <form id="actionForm" method="dialog">
       <div class="dialog-head">
-        <div>
-          <span id="actionEyebrow" class="eyebrow">FILE ACTION</span>
-          <h2 id="actionTitle">Confirm action</h2>
-          <p id="actionDescription"></p>
-        </div>
+        <div><span id="actionEyebrow" class="eyebrow">FILE ACTION</span><h2 id="actionTitle">Confirm action</h2><p id="actionDescription"></p></div>
         <button type="button" class="icon-btn action-cancel" aria-label="Close">×</button>
       </div>
-      <label id="actionInputWrap" class="hidden">Name
-        <input id="actionInput" autocomplete="off">
-        <small id="actionInputHint"></small>
-      </label>
+      <label id="actionInputWrap" class="hidden">Name<input id="actionInput" autocomplete="off"><small id="actionInputHint"></small></label>
       <div id="actionWarning" class="action-warning hidden"></div>
-      <div class="dialog-actions">
-        <button type="button" class="ghost action-cancel">Cancel</button>
-        <button id="actionConfirm" type="submit" class="primary">Continue</button>
-      </div>
+      <div class="dialog-actions"><button type="button" class="ghost action-cancel">Cancel</button><button id="actionConfirm" type="submit" class="primary">Continue</button></div>
     </form>
   </dialog>
 
   <dialog id="trustDialog" class="trust-dialog">
-    <div class="dialog-head">
-      <div>
-        <span class="eyebrow">SSH HOST VERIFICATION</span>
-        <h2>Verify this endpoint</h2>
-        <p>Compare this SHA-256 fingerprint with the server before approving it.</p>
-      </div>
-    </div>
-    <div class="fingerprint-box">
-      <span>SHA-256 fingerprint</span>
-      <code id="trustFingerprint"></code>
-    </div>
-    <div class="trust-warning">SimpleSCP will pin this exact key. A different key will be rejected on future connections.</div>
-    <div class="dialog-actions">
-      <button id="cancelTrust" class="ghost">Cancel</button>
-      <button id="confirmTrust" class="primary">Trust fingerprint</button>
-    </div>
+    <div class="dialog-head"><div><span class="eyebrow">SSH HOST KEY</span><h2>Verify server fingerprint</h2><p>Compare this fingerprint with the server before accepting it.</p></div></div>
+    <div class="fingerprint-box"><span>SHA-256 fingerprint</span><code id="trustFingerprint"></code></div>
+    <div class="trust-warning">SimpleSCP will pin this exact key.</div>
+    <div class="dialog-actions"><button id="cancelTrust" class="ghost">Cancel</button><button id="confirmTrust" class="primary">Trust fingerprint</button></div>
   </dialog>
 
-  <section id="activityDrawer" class="activity-drawer collapsed" aria-label="Transfer activity">
+  <section id="activityDrawer" class="activity-drawer collapsed" aria-label="Transfer queue">
     <button id="activityToggle" class="activity-handle" type="button" aria-expanded="false">
-      <span class="activity-handle-left">
-        <span class="activity-pulse"></span>
-        <strong>Transfer log</strong>
-        <span id="activitySummary">No recent transfers</span>
-      </span>
+      <span class="activity-handle-left"><span class="activity-pulse"></span><strong>Transfer queue</strong><span id="activitySummary">No recent transfers</span></span>
       <span class="activity-chevron">⌃</span>
     </button>
     <div class="activity-body">
-      <div class="activity-head">
-        <div>
-          <span class="eyebrow">SESSION ACTIVITY</span>
-          <h3>Transfer log</h3>
-        </div>
-        <button id="clearActivity" class="ghost">Clear completed</button>
-      </div>
-      <div id="activityList" class="activity-list">
-        <div class="activity-empty">Uploads, copies, deletes and connection activity will appear here.</div>
-      </div>
+      <div class="activity-head"><div><span class="eyebrow">TRANSFERS</span><h3>Transfer queue</h3></div><button id="clearActivity" class="ghost">Clear completed</button></div>
+      <div id="activityList" class="activity-list"><div class="activity-empty">Transfers will appear here.</div></div>
     </div>
   </section>
-
-  <div id="shortcutHint" class="shortcut-hint" aria-hidden="true">
-    <span><kbd>Ctrl</kbd><kbd>A</kbd> Select all</span>
-    <span><kbd>Shift</kbd> Range</span>
-    <span><kbd>Ctrl</kbd><kbd>K</kbd> Filter</span>
-    <span><kbd>F5</kbd> Refresh</span>
-    <span><kbd>Alt</kbd><kbd>↑</kbd> Parent</span>
-    <span><kbd>Delete</kbd> Delete</span>
-  </div>
 
   <div id="toastHost" class="toast-host"></div>
   <script src="/static/app.js" defer></script>
