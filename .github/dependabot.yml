@@ -2,18 +2,33 @@ version: 2
 updates:
   - package-ecosystem: gomod
     directory: /
+    target-branch: main
     schedule:
       interval: weekly
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
+    groups:
+      go-dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: docker
     directory: /
+    target-branch: main
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    groups:
+      container-dependencies:
+        patterns:
+          - "*"
 
   - package-ecosystem: github-actions
     directory: /
+    target-branch: main
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns:
+          - "*"
