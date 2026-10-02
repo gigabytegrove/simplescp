@@ -8,63 +8,136 @@
   <link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand"><div class="brand-mark small">S</div><strong>SimpleSCP</strong></div>
+  <header class="app-header">
+    <div class="brand">
+      <div class="brand-mark small" aria-hidden="true">S</div>
+      <div class="brand-copy">
+        <strong>SimpleSCP</strong>
+        <span>Secure remote file transfer</span>
+      </div>
+    </div>
+    <div class="header-center">
+      <div id="status" class="status ready"><span class="status-dot"></span><span>Ready</span></div>
+    </div>
     <div class="top-actions">
-      <span class="user-pill">{{.Username}}</span>
-      <button id="newConnectionBtn" class="primary">+ New connection</button>
-      <button id="logoutBtn" class="ghost">Sign out</button>
+      <button id="newConnectionBtn" class="primary">＋ Add server</button>
+      <div class="account-chip">
+        <span class="account-avatar">{{slice .Username 0 1}}</span>
+        <span>{{.Username}}</span>
+      </div>
+      <button id="logoutBtn" class="icon-btn subtle" title="Sign out" aria-label="Sign out">↪</button>
     </div>
   </header>
 
-  <main class="workspace">
+  <main class="app-shell">
     <aside class="connections-panel">
-      <div class="panel-title"><div><span class="eyebrow">SAVED SERVERS</span><h2>Connections</h2></div><button id="refreshConnections" class="icon-btn" title="Refresh">↻</button></div>
+      <div class="sidebar-head">
+        <div>
+          <span class="eyebrow">CONNECTIONS</span>
+          <h2>Saved servers</h2>
+        </div>
+        <button id="refreshConnections" class="icon-btn subtle" title="Refresh saved servers" aria-label="Refresh saved servers">↻</button>
+      </div>
+
+      <div class="sidebar-note">
+        <span class="shield-icon">✓</span>
+        <div>
+          <strong>Encrypted profiles</strong>
+          <span>Credentials stay encrypted at rest.</span>
+        </div>
+      </div>
+
       <div id="connectionsList" class="connections-list"></div>
+
+      <div class="sidebar-footer">
+        <span class="trust-dot trusted"></span>
+        <span>Green indicates a pinned SSH host key</span>
+      </div>
     </aside>
 
-    <section class="transfer-panel">
-      <div class="transfer-header">
-        <div><span class="eyebrow">REMOTE WORKSPACE</span><h1>File transfer</h1><p class="muted">Browse two servers side-by-side and copy files directly between them.</p></div>
-        <div id="status" class="status ready">Ready</div>
+    <section class="workspace">
+      <div class="workspace-head">
+        <div>
+          <span class="eyebrow">TRANSFER WORKSPACE</span>
+          <h1>Remote files</h1>
+          <p>Open two saved servers and move files directly between them.</p>
+        </div>
+        <div class="workspace-badge">SFTP over SSH</div>
       </div>
+
       <div class="panes">
         <section class="file-pane" data-pane="left">
-          <div class="pane-toolbar">
-            <select class="server-select" aria-label="Left server"></select>
-            <button class="pane-refresh icon-btn" title="Refresh">↻</button>
+          <div class="pane-head">
+            <div class="pane-side-label">LEFT</div>
+            <div class="pane-toolbar">
+              <select class="server-select" aria-label="Left server"></select>
+              <button class="pane-refresh icon-btn subtle" title="Refresh this server" aria-label="Refresh this server">↻</button>
+            </div>
           </div>
-          <div class="pathbar"><button class="up-btn">↑</button><input class="path-input" value="/" aria-label="Remote path"><button class="go-btn">Go</button></div>
+          <div class="pathbar">
+            <button class="up-btn icon-btn" title="Parent folder" aria-label="Parent folder">↑</button>
+            <div class="path-field">
+              <span class="path-prefix">sftp://</span>
+              <input class="path-input" value="/" aria-label="Remote path">
+            </div>
+            <button class="go-btn">Go</button>
+          </div>
           <div class="file-actions">
-            <button class="upload-btn">Upload</button><input class="upload-input" type="file" multiple hidden>
-            <button class="mkdir-btn">New folder</button>
+            <button class="upload-btn primary-soft">↑ Upload</button>
+            <input class="upload-input" type="file" multiple hidden>
+            <button class="mkdir-btn">＋ Folder</button>
+            <span class="action-separator"></span>
             <button class="rename-btn" disabled>Rename</button>
-            <button class="download-btn" disabled>Download</button>
+            <button class="download-btn" disabled>↓ Download</button>
             <button class="delete-btn danger-outline" disabled>Delete</button>
           </div>
           <div class="file-table-wrap">
-            <table><thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead><tbody class="file-list"></tbody></table>
+            <table>
+              <thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead>
+              <tbody class="file-list"></tbody>
+            </table>
           </div>
-          <div class="pane-footer"><span class="selection-text">Nothing selected</span><button class="copy-to-other primary" disabled>Copy →</button></div>
+          <div class="pane-footer">
+            <span class="selection-text">Nothing selected</span>
+            <button class="copy-to-other transfer-button" disabled>Copy to right <span>→</span></button>
+          </div>
         </section>
 
         <section class="file-pane" data-pane="right">
-          <div class="pane-toolbar">
-            <select class="server-select" aria-label="Right server"></select>
-            <button class="pane-refresh icon-btn" title="Refresh">↻</button>
+          <div class="pane-head">
+            <div class="pane-side-label">RIGHT</div>
+            <div class="pane-toolbar">
+              <select class="server-select" aria-label="Right server"></select>
+              <button class="pane-refresh icon-btn subtle" title="Refresh this server" aria-label="Refresh this server">↻</button>
+            </div>
           </div>
-          <div class="pathbar"><button class="up-btn">↑</button><input class="path-input" value="/" aria-label="Remote path"><button class="go-btn">Go</button></div>
+          <div class="pathbar">
+            <button class="up-btn icon-btn" title="Parent folder" aria-label="Parent folder">↑</button>
+            <div class="path-field">
+              <span class="path-prefix">sftp://</span>
+              <input class="path-input" value="/" aria-label="Remote path">
+            </div>
+            <button class="go-btn">Go</button>
+          </div>
           <div class="file-actions">
-            <button class="upload-btn">Upload</button><input class="upload-input" type="file" multiple hidden>
-            <button class="mkdir-btn">New folder</button>
+            <button class="upload-btn primary-soft">↑ Upload</button>
+            <input class="upload-input" type="file" multiple hidden>
+            <button class="mkdir-btn">＋ Folder</button>
+            <span class="action-separator"></span>
             <button class="rename-btn" disabled>Rename</button>
-            <button class="download-btn" disabled>Download</button>
+            <button class="download-btn" disabled>↓ Download</button>
             <button class="delete-btn danger-outline" disabled>Delete</button>
           </div>
           <div class="file-table-wrap">
-            <table><thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead><tbody class="file-list"></tbody></table>
+            <table>
+              <thead><tr><th>Name</th><th>Size</th><th>Modified</th></tr></thead>
+              <tbody class="file-list"></tbody>
+            </table>
           </div>
-          <div class="pane-footer"><button class="copy-to-other primary" disabled>← Copy</button><span class="selection-text">Nothing selected</span></div>
+          <div class="pane-footer">
+            <button class="copy-to-other transfer-button" disabled><span>←</span> Copy to left</button>
+            <span class="selection-text">Nothing selected</span>
+          </div>
         </section>
       </div>
     </section>
@@ -73,27 +146,50 @@
   <dialog id="connectionDialog">
     <form id="connectionForm" method="dialog">
       <input type="hidden" name="id">
-      <div class="dialog-head"><div><span class="eyebrow">SERVER PROFILE</span><h2 id="connectionDialogTitle">New connection</h2></div><button type="button" class="icon-btn close-dialog">×</button></div>
+      <div class="dialog-head">
+        <div>
+          <span class="eyebrow">SERVER PROFILE</span>
+          <h2 id="connectionDialogTitle">New connection</h2>
+          <p>Save the SSH details you want available in the workspace.</p>
+        </div>
+        <button type="button" class="icon-btn close-dialog" aria-label="Close">×</button>
+      </div>
       <div class="form-grid">
         <label class="span-2">Connection name<input name="name" required placeholder="Production web server"></label>
         <label class="span-2">Host<input name="host" required placeholder="server.example.com"></label>
         <label>Port<input name="port" type="number" min="1" max="65535" value="22" required></label>
-        <label>Username<input name="username" required autocomplete="off"></label>
+        <label>Username<input name="username" required autocomplete="off" placeholder="root"></label>
         <label class="span-2">Authentication<select name="auth_type"><option value="password">Password</option><option value="key">SSH private key</option></select></label>
-        <label class="span-2 auth-password">Password<input name="password" type="password" autocomplete="new-password"><small>Leave blank while editing to keep the saved password.</small></label>
-        <label class="span-2 auth-key hidden">Private key<textarea name="private_key" rows="7" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea><small>Leave blank while editing to keep the saved key.</small></label>
+        <label class="span-2 auth-password">Password<input name="password" type="password" autocomplete="new-password"><small>When editing, leave blank to keep the currently saved password.</small></label>
+        <label class="span-2 auth-key hidden">Private key<textarea name="private_key" rows="7" spellcheck="false" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"></textarea><small>When editing, leave blank to keep the currently saved key.</small></label>
         <label class="span-2 auth-key hidden">Key passphrase<input name="passphrase" type="password" autocomplete="new-password"></label>
         <label class="span-2">Default path<input name="default_path" value="/" placeholder="/"></label>
       </div>
-      <div class="dialog-actions"><button type="button" class="ghost close-dialog">Cancel</button><button id="deleteConnectionBtn" type="button" class="danger hidden">Delete</button><button type="submit" class="primary">Save connection</button></div>
+      <div class="dialog-actions">
+        <button type="button" class="ghost close-dialog">Cancel</button>
+        <button id="deleteConnectionBtn" type="button" class="danger hidden">Delete connection</button>
+        <button type="submit" class="primary">Save connection</button>
+      </div>
     </form>
   </dialog>
 
-  <dialog id="trustDialog">
-    <div class="dialog-head"><div><span class="eyebrow">HOST VERIFICATION</span><h2>Trust this server?</h2></div></div>
-    <p>The server presented this SSH host-key fingerprint. Verify it against the server before trusting it.</p>
-    <code id="trustFingerprint"></code>
-    <div class="dialog-actions"><button id="cancelTrust" class="ghost">Cancel</button><button id="confirmTrust" class="primary">Trust fingerprint</button></div>
+  <dialog id="trustDialog" class="trust-dialog">
+    <div class="dialog-head">
+      <div>
+        <span class="eyebrow">SSH HOST VERIFICATION</span>
+        <h2>Verify this server</h2>
+        <p>Compare this SHA-256 fingerprint with the server before approving it.</p>
+      </div>
+    </div>
+    <div class="fingerprint-box">
+      <span>SHA-256 fingerprint</span>
+      <code id="trustFingerprint"></code>
+    </div>
+    <div class="trust-warning">SimpleSCP will pin this exact key. A different key will be rejected on future connections.</div>
+    <div class="dialog-actions">
+      <button id="cancelTrust" class="ghost">Cancel</button>
+      <button id="confirmTrust" class="primary">Trust this fingerprint</button>
+    </div>
   </dialog>
 
   <div id="toastHost" class="toast-host"></div>
