@@ -17,7 +17,10 @@ import (
 	"time"
 )
 
-const latestReleaseURL = "https://api.github.com/repos/gigabytegrove/simplescp/releases/latest"
+const (
+	latestReleaseURL = "https://api.github.com/repos/gigabytegrove/simplescp/releases/latest"
+	edgeReleaseURL   = "https://api.github.com/repos/gigabytegrove/simplescp/releases/tags/edge"
+)
 
 type Manager struct {
 	dataDir string
@@ -30,9 +33,11 @@ type Asset struct {
 }
 
 type release struct {
-	TagName string  `json:"tag_name"`
-	HTMLURL string  `json:"html_url"`
-	Assets  []Asset `json:"assets"`
+	TagName         string  `json:"tag_name"`
+	HTMLURL         string  `json:"html_url"`
+	TargetCommitish string  `json:"target_commitish"`
+	Prerelease      bool    `json:"prerelease"`
+	Assets          []Asset `json:"assets"`
 }
 
 type Status struct {
@@ -61,16 +66,27 @@ func (m *Manager) updateDir() string { return filepath.Join(m.dataDir, "update")
 func (m *Manager) activePath() string { return filepath.Join(m.updateDir(), "simplescp") }
 func (m *Manager) previousPath() string { return filepath.Join(m.updateDir(), "simplescp.previous") }
 
-func (m *Manager) Status(ctx context.Context, current string) (Status, error) {
-	rel, err := m.latest(ctx)
+func useEdgeChannel(current string) bool {
+	v := strings.ToLower(normalizeVersion(current))
+	return v == "dev" || v == "main" || v == "edge" || strings.HasPrefix(v, "main-") || strings.HasPrefix(v, "edge-")
+}
+
+func (m *Manager) Status(ctx context.Context, current, commit string) (Status, error) {
+	rel, err := m.releaseFor(ctx, current)
 	if err != nil {
 		return Status{}, err
 	}
 	_, rollbackErr := os.Stat(m.previousPath())
+	updateAvailable := normalizeVersion(current) != normalizeVersion(rel.TagName)
+	latestLabel := rel.TagName
+	if useEdgeChannel(current) {
+		latestLabel = "edge"
+		updateAvailable = strings.TrimSpace(commit) == "" || commit == "unknown" || !strings.EqualFold(strings.TrimSpace(commit), strings.TrimSpace(rel.TargetCommitish))
+	}
 	return Status{
 		Current: current,
-		Latest: rel.TagName,
-		UpdateAvailable: normalizeVersion(current) != normalizeVersion(rel.TagName),
+		Latest: latestLabel,
+		UpdateAvailable: updateAvailable,
 		ReleaseURL: rel.HTMLURL,
 		Architecture: runtime.GOARCH,
 		RollbackAvailable: rollbackErr == nil,
@@ -81,9 +97,13 @@ func normalizeVersion(v string) string {
 	return strings.TrimPrefix(strings.TrimSpace(v), "v")
 }
 
-func (m *Manager) latest(ctx context.Context) (release, error) {
+func (m *Manager) releaseFor(ctx context.Context, current string) (release, error) {
 	var rel release
-	body, err := m.fetch(ctx, latestReleaseURL, 2<<20)
+	releaseURL := latestReleaseURL
+	if useEdgeChannel(current) {
+		releaseURL = edgeReleaseURL
+	}
+	body, err := m.fetch(ctx, releaseURL, 2<<20)
 	if err != nil {
 		return rel, err
 	}
@@ -151,7 +171,7 @@ func checksumFromManifest(manifest []byte, filename string) (string, error) {
 	return "", fmt.Errorf("checksum for %s not found", filename)
 }
 
-func (m *Manager) Install(ctx context.Context) (InstallResult, error) {
+func (m *Manager) Install(ctx context.Context, current string) (InstallResult, error) {
 	if runtime.GOOS != "linux" {
 		return InstallResult{}, fmt.Errorf("self-update is only supported in the Linux container")
 	}
@@ -159,7 +179,7 @@ func (m *Manager) Install(ctx context.Context) (InstallResult, error) {
 		return InstallResult{}, fmt.Errorf("self-update is not published for architecture %s", runtime.GOARCH)
 	}
 
-	rel, err := m.latest(ctx)
+	rel, err := m.releaseFor(ctx, current)
 	if err != nil {
 		return InstallResult{}, err
 	}
