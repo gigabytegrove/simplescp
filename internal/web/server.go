@@ -364,12 +364,25 @@ func (a *app) deleteConnection(w http.ResponseWriter,r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+type trustRequest struct {
+	Fingerprint string `json:"fingerprint"`
+}
+
 func (a *app) trustConnection(w http.ResponseWriter,r *http.Request) {
 	id,err:=parseID(r); if err!=nil { writeError(w,400,"invalid connection id"); return }
+	var in trustRequest
+	if err:=decodeJSON(r,&in); err!=nil || strings.TrimSpace(in.Fingerprint)=="" {
+		writeError(w,400,"fingerprint is required")
+		return
+	}
 	c,err:=a.store.GetConnection(userID(r),id)
 	if err!=nil { writeError(w,404,"connection not found"); return }
 	fp,err:=sshclient.ProbeFingerprint(c,a.cfg.SSHTimeout)
 	if err!=nil { writeError(w,502,err.Error()); return }
+	if !secureEqual(fp, strings.TrimSpace(in.Fingerprint)) {
+		writeError(w,http.StatusConflict,"host key changed before confirmation; verify the new fingerprint")
+		return
+	}
 	if err:=a.store.SetHostFingerprint(userID(r),id,fp); err!=nil { writeError(w,500,"unable to save host key"); return }
 	writeJSON(w,200,map[string]any{"fingerprint":fp})
 }
