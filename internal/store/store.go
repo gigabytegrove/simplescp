@@ -126,23 +126,51 @@ CREATE INDEX IF NOT EXISTS idx_connections_user ON connections(user_id);
 }
 
 func (s *Store) BootstrapAdmin(username, password string) error {
+	username = strings.TrimSpace(username)
+
 	var count int
 	if err := s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count); err != nil {
 		return err
 	}
-	if count > 0 {
-		return nil
-	}
+
+	// If a password is explicitly configured, keep that administrator
+	// credential synchronized across container redeploys. Persistent Docker
+	// volumes otherwise preserve an old bootstrap password indefinitely.
 	if strings.TrimSpace(password) == "" {
+		if count > 0 {
+			return nil
+		}
 		return errors.New("initial admin password is required on a fresh database")
 	}
-	if len(password) < 12 {
-		return errors.New("initial admin password must be at least 12 characters")
-	}
-	username = strings.TrimSpace(username)
 	if username == "" {
 		return errors.New("admin username is empty")
 	}
+	if len(password) < 12 {
+		return errors.New("admin password must be at least 12 characters")
+	}
+
+	var id int64
+	var currentHash []byte
+	err := s.db.QueryRow("SELECT id,password_hash FROM users WHERE username = ? COLLATE NOCASE", username).Scan(&id, &currentHash)
+	if err == nil {
+		if bcrypt.CompareHashAndPassword(currentHash, []byte(password)) == nil {
+			_, err = s.db.Exec("UPDATE users SET is_admin=1 WHERE id=?", id)
+			return err
+		}
+		hash, hashErr := bcrypt.GenerateFromPassword([]byte(password), 12)
+		if hashErr != nil {
+			return fmt.Errorf("hash admin password: %w", hashErr)
+		}
+		_, err = s.db.Exec("UPDATE users SET password_hash=?,is_admin=1 WHERE id=?", hash, id)
+		if err != nil {
+			return fmt.Errorf("synchronize admin password: %w", err)
+		}
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
 	if err != nil {
 		return fmt.Errorf("hash admin password: %w", err)
