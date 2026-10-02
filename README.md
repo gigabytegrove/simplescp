@@ -1,102 +1,188 @@
 # SimpleSCP
 
-SimpleSCP is a self-hosted, Docker-first web file-transfer workspace for managing multiple SSH/SFTP servers from one browser. It follows a familiar two-pane workflow so saved servers can be opened side-by-side and files can be moved without bouncing through a desktop client.
+SimpleSCP is a self-hosted web-based multi-server SSH/SFTP file-transfer system. It gives you a familiar two-pane workflow for saving servers, reconnecting quickly, browsing remote filesystems, uploading and downloading files, and copying files directly between remote servers.
 
-SimpleSCP uses SFTP over SSH for file operations. The name describes the simple secure-copy workflow; remote hosts do not need the legacy scp executable.
+SimpleSCP uses SFTP over SSH for remote file operations. Remote systems do not need the legacy `scp` executable.
 
-## Current capabilities
+## Features
 
-- Saved SSH server profiles
-- Retry and reconnect without re-entering credentials
-- Password or SSH private-key authentication
-- AES-256-GCM encryption for saved connection secrets
-- Explicit SSH host-key fingerprint verification and pinning
-- Per-user saved connection ownership
-- Persistent SQLite storage
+- Saved SSH/SFTP server profiles
+- Password and SSH private-key authentication
+- Encrypted saved connection secrets
+- SSH host-key fingerprint verification and pinning
 - Two-pane remote file browser
-- Remote directory navigation
-- Browser-to-server upload
-- Server-to-browser download
+- Browser-to-server uploads
+- Server-to-browser downloads
+- Direct server-to-server file transfers
 - Create, rename, and recursively delete remote folders
-- Direct server-to-server file copy streamed through SimpleSCP
-- Session authentication with HttpOnly and SameSite cookies
-- CSRF protection on state-changing requests
-- Docker health check and non-root runtime
-- Responsive dark web interface
+- Persistent SQLite data
+- Per-user connection ownership
+- Hardened session and CSRF handling
+- Login throttling and transfer resource limits
+- Non-root, read-only Docker runtime
+- Multi-architecture container images for amd64 and arm64
+- Automated dependency vulnerability scanning
 
-## Quick start
+## Recommended installation: Docker Compose
 
-1. Copy .env.example to .env.
-2. Generate a 32-byte master key with: openssl rand -base64 32
-3. Put that value in SIMPLE_SCP_MASTER_KEY.
-4. Set SIMPLE_SCP_ADMIN_PASSWORD to a strong password of at least 12 characters.
-5. Run: docker compose up -d --build
-6. Open http://your-server:8080
+Docker Compose is the primary deployment method. You do **not** need to clone the repository or build SimpleSCP locally.
 
-For production behind HTTPS, set SIMPLE_SCP_COOKIE_SECURE=true.
+Create a directory for the deployment:
 
-The master key protects stored SSH passwords, private keys, and key passphrases. Back it up. Losing or changing it makes existing saved credentials unreadable.
+```bash
+mkdir -p simplescp
+cd simplescp
+```
+
+Download the Compose file and example environment:
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/gigabytegrove/simplescp/main/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/gigabytegrove/simplescp/main/.env.example -o .env
+```
+
+Generate a master encryption key:
+
+```bash
+openssl rand -base64 32
+```
+
+Edit `.env` and set at minimum:
+
+```dotenv
+SIMPLE_SCP_MASTER_KEY=PASTE_THE_GENERATED_KEY_HERE
+SIMPLE_SCP_ADMIN_USER=admin
+SIMPLE_SCP_ADMIN_PASSWORD=SET_A_STRONG_PASSWORD
+```
+
+Start SimpleSCP:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+Open:
+
+```text
+http://YOUR-SERVER:8080
+```
+
+Check status:
+
+```bash
+docker compose ps
+docker compose logs -f simplescp
+```
+
+Update later with:
+
+```bash
+docker compose pull
+docker compose up -d
+```
+
+The default image is:
+
+```text
+ghcr.io/gigabytegrove/simplescp:latest
+```
+
+Set `SIMPLE_SCP_VERSION` in `.env` if you want to pin a specific release instead of `latest`.
+
+## Production HTTPS
+
+For anything exposed beyond a trusted local network, put SimpleSCP behind an HTTPS reverse proxy and set:
+
+```dotenv
+SIMPLE_SCP_COOKIE_SECURE=true
+```
+
+When secure cookies are enabled, SimpleSCP also sends HSTS.
+
+The web interface should ideally be restricted by firewall, VPN, private network, or another trusted access layer in addition to application authentication.
+
+## Secrets
+
+The master key protects saved SSH passwords, private keys, and private-key passphrases. Losing the master key makes those encrypted credentials unrecoverable.
+
+For production, mounted secret files are preferred:
+
+```dotenv
+SIMPLE_SCP_MASTER_KEY_FILE=/run/secrets/simplescp_master_key
+SIMPLE_SCP_ADMIN_PASSWORD_FILE=/run/secrets/simplescp_admin_password
+```
+
+The bootstrap admin password is only needed while creating the first account. Once the database contains a user, remove the bootstrap password from the deployment configuration.
+
+Back up the exact master key separately from the database.
 
 ## Configuration
 
-SIMPLE_SCP_LISTEN defaults to :8080.
-
-SIMPLE_SCP_DATA_DIR defaults to /data.
-
-SIMPLE_SCP_MASTER_KEY is required and must be a base64-encoded 32-byte value.
-
-SIMPLE_SCP_ADMIN_USER defaults to admin.
-
-SIMPLE_SCP_ADMIN_PASSWORD is required on first startup and must be at least 12 characters.
-
-SIMPLE_SCP_COOKIE_SECURE defaults to false and should be true when served through HTTPS.
-
-SIMPLE_SCP_SESSION_TTL defaults to 24h.
-
-SIMPLE_SCP_SSH_TIMEOUT defaults to 15s.
-
-The bootstrap admin variables create the first account only when the user table is empty. They do not overwrite an existing account on restart.
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `SIMPLE_SCP_VERSION` | `latest` | Container image tag used by Compose |
+| `SIMPLE_SCP_PORT` | `8080` | Host port published by Compose |
+| `SIMPLE_SCP_LISTEN` | `:8080` | Internal HTTP listen address |
+| `SIMPLE_SCP_DATA_DIR` | `/data` | Persistent application data |
+| `SIMPLE_SCP_MASTER_KEY` | required | Base64-encoded 32-byte credential encryption key |
+| `SIMPLE_SCP_MASTER_KEY_FILE` | empty | Mounted-file alternative for the master key |
+| `SIMPLE_SCP_ADMIN_USER` | `admin` | Initial administrator username |
+| `SIMPLE_SCP_ADMIN_PASSWORD` | first boot only | Initial administrator password |
+| `SIMPLE_SCP_ADMIN_PASSWORD_FILE` | empty | Mounted-file alternative for the initial password |
+| `SIMPLE_SCP_COOKIE_SECURE` | `false` | Require HTTPS-only session cookies |
+| `SIMPLE_SCP_SESSION_TTL` | `24h` | Session lifetime |
+| `SIMPLE_SCP_SSH_TIMEOUT` | `15s` | SSH connection timeout |
+| `SIMPLE_SCP_MAX_UPLOAD_BYTES` | `10737418240` | Maximum HTTP upload body size |
+| `SIMPLE_SCP_MAX_CONCURRENT_TRANSFERS` | `4` | Concurrent transfer limit |
+| `SIMPLE_SCP_LOGIN_MAX_ATTEMPTS` | `5` | Login attempts allowed per username/IP window |
+| `SIMPLE_SCP_LOGIN_WINDOW` | `15m` | Login throttling window |
 
 ## SSH host verification
 
 SimpleSCP never silently accepts an unknown SSH host key.
 
-On first connection, it probes the server and displays the SHA-256 host-key fingerprint. Verify that fingerprint against the server or another trusted source, then explicitly trust it. The fingerprint is pinned to that saved connection.
+On the first connection, SimpleSCP displays the server's SHA-256 SSH host-key fingerprint. Verify it against the server or another trusted source before approving it.
 
-If the server later presents a different key, the connection is rejected instead of silently replacing the trusted fingerprint. Editing a saved host or port clears the previous fingerprint and requires verification again.
+The exact approved fingerprint is pinned. If the server later presents a different key, SimpleSCP rejects the connection rather than automatically replacing the trusted fingerprint.
 
-## Security model
+Editing a saved host or port clears the previous fingerprint and requires verification again.
 
-Saved SSH secrets are encrypted before SQLite persistence. The encryption key is supplied at runtime and is not stored in the database.
+## Transfer integrity
 
-Password hashes use bcrypt. Session tokens are random and only their SHA-256 hashes are stored. Session cookies are HttpOnly and SameSite Strict. State-changing API calls require a session-specific CSRF token.
+Uploads and server-to-server copies are written to temporary files on the destination first. The final path is committed only after the transfer succeeds, which avoids leaving a normal-looking truncated destination file after a failed transfer.
 
-The container runs as an unprivileged user and does not require Docker socket access, privileged mode, or host filesystem mounts.
-
-For internet-facing deployments, use a TLS reverse proxy and enable secure cookies.
-
-## Server-to-server transfers
-
-Connect the left and right panes to different saved servers. Select a file in one pane and use Copy to send it to the current folder in the other pane.
-
-The transfer path is:
-
-source SSH/SFTP server -> SimpleSCP -> destination SSH/SFTP server
-
-The file is streamed and does not need to be written to local disk first.
+SimpleSCP refuses destructive requests that attempt to delete or rename remote `/`.
 
 ## Backup
 
-Back up both the persistent /data volume and the exact SIMPLE_SCP_MASTER_KEY. A database backup without the matching master key cannot recover saved SSH credentials.
+Back up both:
 
-## Development
+- the persistent `simplescp_data` volume
+- the exact SimpleSCP master key
+
+A database backup without its matching master key cannot decrypt saved SSH credentials.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for the security model and production deployment guidance.
+
+CI runs tests, `go vet`, `govulncheck`, a native build, and a Docker build. Known reachable Go vulnerabilities fail the pipeline.
+
+## Development from source
+
+Source builds are for development and contribution, not the normal deployment path.
 
 Requires Go 1.27.1 or newer.
 
-Run:
-
+```bash
 go mod tidy
-
 go test ./...
-
 go run ./cmd/simplescp
+```
+
+To build a local development image:
+
+```bash
+docker build -t simplescp:dev .
+```
