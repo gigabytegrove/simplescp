@@ -183,6 +183,28 @@
     </form>
   </dialog>
 
+  <dialog id="actionDialog" class="action-dialog">
+    <form id="actionForm" method="dialog">
+      <div class="dialog-head">
+        <div>
+          <span id="actionEyebrow" class="eyebrow">FILE ACTION</span>
+          <h2 id="actionTitle">Confirm action</h2>
+          <p id="actionDescription"></p>
+        </div>
+        <button type="button" class="icon-btn action-cancel" aria-label="Close">×</button>
+      </div>
+      <label id="actionInputWrap" class="hidden">Name
+        <input id="actionInput" autocomplete="off">
+        <small id="actionInputHint"></small>
+      </label>
+      <div id="actionWarning" class="action-warning hidden"></div>
+      <div class="dialog-actions">
+        <button type="button" class="ghost action-cancel">Cancel</button>
+        <button id="actionConfirm" type="submit" class="primary">Continue</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="trustDialog" class="trust-dialog">
     <div class="dialog-head">
       <div>
