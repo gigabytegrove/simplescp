@@ -514,8 +514,10 @@ async function createFolder(side) {
         body: { path: normalizePath(pane.path + "/" + cleanName) }
       });
     });
+    addActivity("folder", "Created folder", cleanName + " in " + pane.path, "success");
     await loadPane(side);
   } catch (err) {
+    addActivity("folder", "Create folder failed", err.message, "error");
     toast(err.message, "error");
   }
 }
@@ -537,8 +539,10 @@ async function renameSelected(side) {
       }
     });
     toast("Renamed.", "success");
+    addActivity("rename", "Renamed item", selected.name + " → " + cleanName, "success");
     await loadPane(side);
   } catch (err) {
+    addActivity("rename", "Rename failed", err.message, "error");
     toast(err.message, "error");
   }
 }
@@ -555,9 +559,9 @@ async function deleteSelected(side) {
   if (!selected.length) return;
   const label = selected.length === 1 ? '"' + selected[0].name + '"' : selected.length + " selected items";
   if (!confirm("Delete " + label + "? Folders will be removed recursively.")) return;
+  const activityId = addActivity("delete", "Delete", selected.length + " item" + (selected.length === 1 ? "" : "s") + " from " + pane.path, "busy");
   try {
     setStatus("Deleting " + selected.length + " item" + (selected.length === 1 ? "" : "s") + "…", "busy");
-    const activityId = addActivity("delete", "Delete", selected.length + " item" + (selected.length === 1 ? "" : "s") + " from " + pane.path, "busy");
     for (const item of selected) {
       await api("/api/connections/" + pane.connectionId + "/delete", {
         method: "POST",
@@ -570,6 +574,7 @@ async function deleteSelected(side) {
     await loadPane(side);
   } catch (err) {
     setStatus("Delete failed", "error");
+    updateActivity(activityId, "error", err.message);
     toast(err.message, "error");
   }
 }
