@@ -1,6 +1,6 @@
 module github.com/gigabytegrove/simplescp
 
-go 1.25
+go 1.27
 
 require (
 	github.com/pkg/sftp v1.13.9
