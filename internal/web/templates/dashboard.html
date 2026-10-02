@@ -82,6 +82,7 @@
             </div>
             <button class="go-btn">Go</button>
           </div>
+          <div class="breadcrumbs" aria-label="Left path breadcrumbs"></div>
           <div class="file-actions">
             <button class="upload-btn primary-soft">↑ Upload</button>
             <input class="upload-input" type="file" multiple hidden>
@@ -90,6 +91,10 @@
             <button class="rename-btn" disabled>Rename</button>
             <button class="download-btn" disabled>↓ Download</button>
             <button class="delete-btn danger-outline" disabled>Delete</button>
+            <div class="pane-search-wrap">
+              <span>⌕</span>
+              <input class="pane-search" type="search" placeholder="Filter files" aria-label="Filter files">
+            </div>
           </div>
           <div class="file-table-wrap">
             <table>
@@ -119,6 +124,7 @@
             </div>
             <button class="go-btn">Go</button>
           </div>
+          <div class="breadcrumbs" aria-label="Right path breadcrumbs"></div>
           <div class="file-actions">
             <button class="upload-btn primary-soft">↑ Upload</button>
             <input class="upload-input" type="file" multiple hidden>
@@ -127,6 +133,10 @@
             <button class="rename-btn" disabled>Rename</button>
             <button class="download-btn" disabled>↓ Download</button>
             <button class="delete-btn danger-outline" disabled>Delete</button>
+            <div class="pane-search-wrap">
+              <span>⌕</span>
+              <input class="pane-search" type="search" placeholder="Filter files" aria-label="Filter files">
+            </div>
           </div>
           <div class="file-table-wrap">
             <table>
@@ -191,6 +201,32 @@
       <button id="confirmTrust" class="primary">Trust this fingerprint</button>
     </div>
   </dialog>
+
+  <section id="activityDrawer" class="activity-drawer collapsed" aria-label="Transfer activity">
+    <button id="activityToggle" class="activity-handle" type="button" aria-expanded="false">
+      <span class="activity-handle-left"><span class="activity-pulse"></span><strong>Activity</strong><span id="activitySummary">No recent transfers</span></span>
+      <span class="activity-chevron">⌃</span>
+    </button>
+    <div class="activity-body">
+      <div class="activity-head">
+        <div>
+          <span class="eyebrow">TRANSFER ACTIVITY</span>
+          <h3>Recent operations</h3>
+        </div>
+        <button id="clearActivity" class="ghost">Clear completed</button>
+      </div>
+      <div id="activityList" class="activity-list">
+        <div class="activity-empty">Uploads, copies, deletes and connection activity will appear here.</div>
+      </div>
+    </div>
+  </section>
+
+  <div id="shortcutHint" class="shortcut-hint" aria-hidden="true">
+    <span><kbd>Ctrl</kbd><kbd>K</kbd> Filter active pane</span>
+    <span><kbd>F5</kbd> Refresh</span>
+    <span><kbd>Alt</kbd><kbd>↑</kbd> Parent</span>
+    <span><kbd>Delete</kbd> Delete selection</span>
+  </div>
 
   <div id="toastHost" class="toast-host"></div>
   <script src="/static/app.js" defer></script>
