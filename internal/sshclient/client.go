@@ -1,6 +1,8 @@
 package sshclient
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -153,12 +155,20 @@ func (c *Client) Mkdir(remotePath string) error {
 }
 
 func (c *Client) Rename(oldPath, newPath string) error {
-	return c.SFTP.Rename(CleanRemote(oldPath), CleanRemote(newPath))
+	oldPath = CleanRemote(oldPath)
+	newPath = CleanRemote(newPath)
+	if oldPath == "/" {
+		return errors.New("refusing to rename remote root")
+	}
+	return c.SFTP.Rename(oldPath, newPath)
 }
 
 func (c *Client) Remove(remotePath string, recursive bool) error {
 	remotePath = CleanRemote(remotePath)
-	info, err := c.SFTP.Stat(remotePath)
+	if remotePath == "/" {
+		return errors.New("refusing to delete remote root")
+	}
+	info, err := c.SFTP.Lstat(remotePath)
 	if err != nil { return err }
 	if !info.IsDir() { return c.SFTP.Remove(remotePath) }
 	if !recursive { return c.SFTP.RemoveDirectory(remotePath) }
@@ -191,22 +201,108 @@ func (c *Client) Open(remotePath string) (io.ReadCloser, os.FileInfo, error) {
 
 func (c *Client) Create(remotePath string) (io.WriteCloser, error) {
 	remotePath = CleanRemote(remotePath)
+	if remotePath == "/" {
+		return nil, errors.New("refusing to create a file at remote root")
+	}
 	if err := c.SFTP.MkdirAll(path.Dir(remotePath)); err != nil { return nil,err }
 	return c.SFTP.Create(remotePath)
+}
+
+func tempRemotePath(finalPath string) (string, error) {
+	finalPath = CleanRemote(finalPath)
+	if finalPath == "/" {
+		return "", errors.New("invalid destination path")
+	}
+	buf := make([]byte, 12)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate temporary path: %w", err)
+	}
+	name := "." + path.Base(finalPath) + ".simplescp-" + hex.EncodeToString(buf) + ".part"
+	return path.Join(path.Dir(finalPath), name), nil
+}
+
+func (c *Client) CreateTemp(finalPath string) (string, io.WriteCloser, error) {
+	finalPath = CleanRemote(finalPath)
+	if err := c.SFTP.MkdirAll(path.Dir(finalPath)); err != nil {
+		return "", nil, err
+	}
+	tempPath, err := tempRemotePath(finalPath)
+	if err != nil {
+		return "", nil, err
+	}
+	f, err := c.SFTP.OpenFile(tempPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	if err != nil {
+		return "", nil, err
+	}
+	return tempPath, f, nil
+}
+
+func (c *Client) AbortTemp(tempPath string) {
+	if tempPath != "" {
+		_ = c.SFTP.Remove(CleanRemote(tempPath))
+	}
+}
+
+func (c *Client) CommitTemp(tempPath, finalPath string) error {
+	tempPath = CleanRemote(tempPath)
+	finalPath = CleanRemote(finalPath)
+	if tempPath == "/" || finalPath == "/" {
+		return errors.New("invalid commit path")
+	}
+
+	if err := c.SFTP.PosixRename(tempPath, finalPath); err == nil {
+		return nil
+	}
+
+	backupPath, err := tempRemotePath(finalPath + ".bak")
+	if err != nil {
+		return err
+	}
+	hadExisting := false
+	if _, err := c.SFTP.Lstat(finalPath); err == nil {
+		if err := c.SFTP.Rename(finalPath, backupPath); err != nil {
+			return fmt.Errorf("prepare destination replacement: %w", err)
+		}
+		hadExisting = true
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if err := c.SFTP.Rename(tempPath, finalPath); err != nil {
+		if hadExisting {
+			_ = c.SFTP.Rename(backupPath, finalPath)
+		}
+		return err
+	}
+	if hadExisting {
+		_ = c.SFTP.Remove(backupPath)
+	}
+	return nil
 }
 
 func CopyFile(src *Client, srcPath string, dst *Client, dstPath string) (int64, error) {
 	in, info, err := src.Open(srcPath)
 	if err != nil { return 0, err }
 	defer in.Close()
-	out, err := dst.Create(dstPath)
+	tempPath, out, err := dst.CreateTemp(dstPath)
 	if err != nil { return 0, err }
+	committed := false
+	defer func() {
+		if !committed {
+			dst.AbortTemp(tempPath)
+		}
+	}()
+
 	n, copyErr := io.Copy(out, in)
 	closeErr := out.Close()
 	if copyErr != nil { return n, copyErr }
 	if closeErr != nil { return n, closeErr }
 	if info.Mode().Perm() != 0 {
-		_ = dst.SFTP.Chmod(CleanRemote(dstPath), info.Mode().Perm())
+		_ = dst.SFTP.Chmod(tempPath, info.Mode().Perm())
 	}
+	if err := dst.CommitTemp(tempPath, dstPath); err != nil {
+		return n, err
+	}
+	committed = true
 	return n, nil
 }
