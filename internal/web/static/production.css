@@ -515,3 +515,99 @@ dialog::backdrop{background:rgba(18,22,20,.58)!important;backdrop-filter:none!im
   td:first-child,th:first-child{width:72%!important}
   td:nth-child(2),th:nth-child(2){width:28%!important}
 }
+
+
+/* Local-computer endpoint ------------------------------------------------ */
+.file-pane.local-pane{
+  border-color:#83b5b0!important;
+}
+.file-pane.local-pane .pane-head{
+  background:#e8f4f2!important;
+  border-bottom-color:#b8d8d4!important;
+}
+.file-pane.local-pane .lane-token{
+  background:var(--teal)!important;
+}
+.file-pane.local-pane.active-pane{
+  border-color:#287c76!important;
+  box-shadow:0 0 0 2px var(--teal),var(--shadow-tight)!important;
+}
+.file-pane.local-pane.active-pane .lane-token{
+  background:var(--signal)!important;
+}
+.file-pane.local-pane .path-field{
+  border-color:#b5d2ce!important;
+}
+.file-pane.local-pane .path-prefix{
+  color:#17756f!important;
+}
+.file-pane.local-pane .breadcrumbs{
+  background:#edf7f5!important;
+  border-bottom-color:#cbe1dd!important;
+}
+.file-pane.local-pane .pane-footer{
+  background:#eaf4f2!important;
+  border-top-color:#bdd7d3!important;
+}
+
+/* Integrated updater ---------------------------------------------------- */
+.update-button{
+  border-color:#454d49!important;
+  color:#cbd3cf!important;
+  background:#222826!important;
+  font:700 .58rem/1.2 "SFMono-Regular",Consolas,monospace!important;
+}
+.update-button:hover{
+  background:#2e3532!important;
+  border-color:#5a645f!important;
+  color:#fff!important;
+}
+.update-dialog{
+  width:min(620px,calc(100vw - 28px))!important;
+  padding:0 20px!important;
+}
+.update-status-grid{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+  margin:2px 0 14px;
+}
+.update-status-grid>div{
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+  padding:11px 12px;
+  border:1px solid #d5dcd8;
+  border-radius:4px;
+  background:#f6f8f7;
+}
+.update-status-grid span{
+  color:#7b837f;
+  font:800 .53rem/1.2 "SFMono-Regular",Consolas,monospace;
+  text-transform:uppercase;
+  letter-spacing:.09em;
+}
+.update-status-grid strong{
+  color:#202523;
+  font:750 .78rem/1.25 "SFMono-Regular",Consolas,monospace;
+  overflow-wrap:anywhere;
+}
+.update-message{
+  margin:0 0 15px;
+  padding:10px 11px;
+  border-left:3px solid var(--teal);
+  background:#edf6f4;
+  color:#4f5c57;
+  font-size:.7rem;
+  line-height:1.5;
+}
+.update-dialog .dialog-actions{
+  margin-top:0!important;
+}
+#rollbackUpdateBtn{
+  margin-right:auto;
+}
+@media(max-width:700px){
+  .update-status-grid{grid-template-columns:1fr}
+  .update-button{display:none!important}
+}
