@@ -439,11 +439,14 @@ func (a *app) uploadRemote(w http.ResponseWriter,r *http.Request) {
 		if part.FileName()=="" { part.Close(); continue }
 		name:=path.Base(strings.ReplaceAll(part.FileName(),"\\","/"))
 		if name=="." || name=="/" || name=="" { part.Close(); continue }
-		dst,err:=client.Create(path.Join(target,name))
+		finalPath:=path.Join(target,name)
+		tempPath,dst,err:=client.CreateTemp(finalPath)
 		if err!=nil { part.Close(); sshError(w,err); return }
 		n,copyErr:=io.Copy(dst,part)
-		closeErr:=dst.Close(); part.Close()
+		closeErr:=dst.Close()
+		part.Close()
 		if copyErr!=nil {
+			client.AbortTemp(tempPath)
 			if strings.Contains(copyErr.Error(), "request body too large") {
 				writeError(w,http.StatusRequestEntityTooLarge,"upload exceeds configured size limit")
 				return
@@ -451,7 +454,16 @@ func (a *app) uploadRemote(w http.ResponseWriter,r *http.Request) {
 			sshError(w,copyErr)
 			return
 		}
-		if closeErr!=nil { sshError(w,closeErr); return }
+		if closeErr!=nil {
+			client.AbortTemp(tempPath)
+			sshError(w,closeErr)
+			return
+		}
+		if err:=client.CommitTemp(tempPath,finalPath); err!=nil {
+			client.AbortTemp(tempPath)
+			sshError(w,err)
+			return
+		}
 		uploaded=append(uploaded,map[string]any{"name":name,"bytes":n})
 	}
 	writeJSON(w,201,map[string]any{"uploaded":uploaded})
