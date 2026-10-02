@@ -160,7 +160,7 @@ async function connectPane(side, id) {
   if (!c) return;
   state.panes[side].connectionId = Number(id);
   state.panes[side].path = normalizePath(c.default_path || "/");
-  state.panes[side].selected = null;
+  state.panes[side].selected = [];
   renderServerSelects();
   await loadPane(side);
 }
