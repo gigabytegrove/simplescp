@@ -16,6 +16,7 @@
       </div>
     </section>
     <form class="auth-card" action="/login" method="post" autocomplete="on">
+      <input type="hidden" name="csrf_token" value="{{.CSRF}}">
       <div>
         <span class="eyebrow">WELCOME BACK</span>
         <h2>Sign in</h2>
