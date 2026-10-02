@@ -30,11 +30,20 @@ func Load() (Config, error) {
 	cfg := Config{
 		Listen:        env("SIMPLE_SCP_LISTEN", ":8080"),
 		DataDir:       env("SIMPLE_SCP_DATA_DIR", "/data"),
-		AdminUser:     env("SIMPLE_SCP_ADMIN_USER", "admin"),
-		AdminPassword: os.Getenv("SIMPLE_SCP_ADMIN_PASSWORD"),
+		AdminUser: env("SIMPLE_SCP_ADMIN_USER", "admin"),
 	}
 
-	keyText := strings.TrimSpace(os.Getenv("SIMPLE_SCP_MASTER_KEY"))
+	adminPassword, err := secretValue("SIMPLE_SCP_ADMIN_PASSWORD", "SIMPLE_SCP_ADMIN_PASSWORD_FILE")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.AdminPassword = adminPassword
+
+	keyRaw, err := secretValue("SIMPLE_SCP_MASTER_KEY", "SIMPLE_SCP_MASTER_KEY_FILE")
+	if err != nil {
+		return Config{}, err
+	}
+	keyText := strings.TrimSpace(keyRaw)
 	if keyText == "" {
 		return Config{}, errors.New("SIMPLE_SCP_MASTER_KEY is required")
 	}
@@ -43,13 +52,6 @@ func Load() (Config, error) {
 		return Config{}, errors.New("SIMPLE_SCP_MASTER_KEY must be a base64-encoded 32-byte key")
 	}
 	cfg.MasterKey = key
-
-	if strings.TrimSpace(cfg.AdminPassword) == "" {
-		return Config{}, errors.New("SIMPLE_SCP_ADMIN_PASSWORD is required")
-	}
-	if len(cfg.AdminPassword) < 12 {
-		return Config{}, errors.New("SIMPLE_SCP_ADMIN_PASSWORD must be at least 12 characters")
-	}
 
 	cfg.CookieSecure, err = strconv.ParseBool(env("SIMPLE_SCP_COOKIE_SECURE", "false"))
 	if err != nil {
@@ -97,4 +99,16 @@ func env(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func secretValue(envName, fileEnvName string) (string, error) {
+	filePath := strings.TrimSpace(os.Getenv(fileEnvName))
+	if filePath != "" {
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return "", fmt.Errorf("read %s: %w", fileEnvName, err)
+		}
+		return strings.TrimRight(string(data), "\r\n"), nil
+	}
+	return os.Getenv(envName), nil
 }
