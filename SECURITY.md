@@ -66,4 +66,23 @@ For that reason, do not grant SimpleSCP access to network segments that its auth
 
 ## Vulnerability reporting
 
-Do not publish credentials, private keys, database files, master keys, or exploitable security details in a public issue. Use a private security-reporting channel for sensitive vulnerability information.
+Do not publish credentials, private keys, database files, master keys, or exploitable security details in a public issue.
+
+For security vulnerabilities, use GitHub's private vulnerability-reporting / Security Advisory workflow for this repository when available. Include:
+
+- the affected SimpleSCP version or commit
+- deployment details relevant to the issue
+- clear reproduction steps
+- expected and actual behavior
+- impact and attack prerequisites
+- any logs needed to understand the issue, with secrets removed
+
+Use normal public issues for non-sensitive bugs, feature requests, documentation problems, and usability feedback.
+
+## Security support expectations
+
+The actively maintained branch is `main`, and published container images are built from commits that pass CI security gates.
+
+Security fixes may require upgrading Go, SSH/SFTP libraries, SQLite, the container base image, or GitHub Actions dependencies. Dependabot is enabled to surface those updates.
+
+Users running production deployments should prefer a pinned release tag once releases are published, keep the deployment current, and review release notes before upgrades.
