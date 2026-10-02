@@ -414,7 +414,7 @@ async function loadLocalPane(side) {
       const entryPath = normalizePath(pane.path + "/" + name);
       pane.localHandles.set(entryPath, handle);
       if (handle.kind === "directory") {
-        entries.push({ name:name, path:entryPath, is_dir:true, size:0, mod_time:new Date(0).toISOString() });
+        entries.push({ name:name, path:entryPath, is_dir:true, size:0, mod_time:null });
       } else {
         const file = await handle.getFile();
         entries.push({ name:name, path:entryPath, is_dir:false, size:file.size, mod_time:new Date(file.lastModified).toISOString() });
@@ -509,7 +509,7 @@ function renderEntries(side, entries) {
     return '<tr class="entry-row" role="row" aria-selected="false" data-path="' + escapeHTML(entry.path) + '" data-name="' + escapeHTML(entry.name) + '" data-dir="' + (entry.is_dir ? "1" : "0") + '" data-size="' + entry.size + '">' +
       '<td><div class="file-name"><span class="file-icon file-kind-' + kind.kind + '">' + kind.icon + '</span><span class="file-name-text">' + escapeHTML(entry.name) + '</span></div></td>' +
       '<td>' + (entry.is_dir ? "—" : bytes(entry.size)) + '</td>' +
-      '<td>' + new Date(entry.mod_time).toLocaleString() + '</td>' +
+      '<td>' + (entry.mod_time ? new Date(entry.mod_time).toLocaleString() : "—") + '</td>' +
       '</tr>';
   }).join("");
 
@@ -528,12 +528,14 @@ function renderEntries(side, entries) {
 }
 
 function rowItem(row) {
+  const side = row.closest(".file-pane")?.dataset.pane;
+  const pane = side ? state.panes[side] : null;
   return {
     path: row.dataset.path,
     name: row.dataset.name,
     isDir: row.dataset.dir === "1",
     size: Number(row.dataset.size || 0),
-    handle: state.panes[side].mode === "local" ? state.panes[side].localHandles.get(row.dataset.path) || null : null
+    handle: pane && pane.mode === "local" ? pane.localHandles.get(row.dataset.path) || null : null
   };
 }
 
