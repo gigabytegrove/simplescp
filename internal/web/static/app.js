@@ -775,7 +775,7 @@ function wirePremiumControls() {
       deleteSelected(side);
     } else if (event.key === "Escape") {
       state.panes[side].selected = [];
-      $(".entry-row", pane).forEach(function (row) { row.classList.remove("selected"); });
+      pane.querySelectorAll(".entry-row").forEach(function (row) { row.classList.remove("selected"); });
       updatePaneSelection(side);
     }
   });
