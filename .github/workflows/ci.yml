@@ -28,13 +28,6 @@ jobs:
       - name: Resolve modules
         run: go mod tidy
 
-      - name: Emit generated checksum lock for bootstrap
-        run: |
-          echo "GO_SUM_BEGIN"
-          cat go.sum
-          echo "GO_SUM_END"
-          exit 77
-
       - name: Verify module files are clean
         run: git diff --exit-code -- go.mod go.sum
 
