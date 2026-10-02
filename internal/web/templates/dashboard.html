@@ -26,6 +26,7 @@
     </div>
 
     <div class="top-actions">
+      {{if .IsAdmin}}<button id="updateBtn" class="subtle update-button" type="button" title="SimpleSCP updater">Update · {{.Version}}</button>{{end}}
       <button id="newConnectionBtn" class="primary">
         <span class="button-glyph" aria-hidden="true">＋</span>
         New server
@@ -208,6 +209,31 @@
       </div>
     </section>
   </main>
+
+  {{if .IsAdmin}}
+  <dialog id="updateDialog" class="update-dialog">
+    <div class="dialog-head">
+      <div>
+        <span class="eyebrow">IN-CONTAINER UPDATER</span>
+        <h2>SimpleSCP update</h2>
+        <p>Updates are verified, stored in /data, and activated by restarting this same container.</p>
+      </div>
+      <button type="button" class="icon-btn update-close" aria-label="Close">×</button>
+    </div>
+    <div class="update-status-grid">
+      <div><span>Running</span><strong id="updateCurrent">{{.Version}}</strong></div>
+      <div><span>Latest release</span><strong id="updateLatest">Checking…</strong></div>
+      <div><span>Architecture</span><strong id="updateArch">—</strong></div>
+      <div><span>Status</span><strong id="updateState">Not checked</strong></div>
+    </div>
+    <div id="updateMessage" class="update-message">Open this panel to check GitHub Releases for a verified update.</div>
+    <div class="dialog-actions">
+      <button id="rollbackUpdateBtn" type="button" class="ghost" disabled>Rollback</button>
+      <button type="button" class="ghost update-close">Close</button>
+      <button id="installUpdateBtn" type="button" class="primary" disabled>Install update</button>
+    </div>
+  </dialog>
+  {{end}}
 
   <dialog id="connectionDialog">
     <form id="connectionForm" method="dialog">
