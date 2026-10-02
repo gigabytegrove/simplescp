@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sign in · SimpleSCP</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="auth-body">
+  <main class="auth-shell">
+    <section class="auth-brand">
+      <div class="brand-mark">S</div>
+      <div>
+        <h1>SimpleSCP</h1>
+        <p>Secure multi-server file transfer from your browser.</p>
+      </div>
+    </section>
+    <form class="auth-card" action="/login" method="post" autocomplete="on">
+      <div>
+        <span class="eyebrow">WELCOME BACK</span>
+        <h2>Sign in</h2>
+        <p class="muted">Access saved servers and transfer files securely.</p>
+      </div>
+      {{if .Error}}<div class="alert danger">{{.Error}}</div>{{end}}
+      <label>Username<input name="username" autocomplete="username" required autofocus></label>
+      <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
+      <button class="primary full" type="submit">Sign in</button>
+    </form>
+  </main>
+</body>
+</html>
