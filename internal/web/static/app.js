@@ -4,8 +4,8 @@ const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
 const state = {
   connections: [],
   panes: {
-    left: { connectionId: 0, path: "/", selected: [] },
-    right: { connectionId: 0, path: "/", selected: [] }
+    left: makePaneState(),
+    right: makePaneState()
   },
   pendingTrust: null,
   activePane: "left",
@@ -15,7 +15,19 @@ const state = {
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+const $ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+function makePaneState() {
+  return {
+    mode: "remote",
+    connectionId: 0,
+    path: "/",
+    selected: [],
+    localRoot: null,
+    localRootName: "",
+    localHandles: new Map()
+  };
+}
 
 function toast(message, type) {
   const host = $("#toastHost");
@@ -117,7 +129,7 @@ function renderBreadcrumbs(side) {
   if (!host) return;
 
   const parts = normalizePath(pane.path).split("/").filter(Boolean);
-  const crumbs = [{ label: "/", path: "/" }];
+  const crumbs = [{ label: pane.mode === "local" ? (pane.localRootName || "Local") : "/", path: "/" }];
   let current = "";
   parts.forEach(function (part) {
     current += "/" + part;
@@ -303,11 +315,15 @@ function renderConnections() {
 function renderServerSelects() {
   $$(".file-pane").forEach(function (paneEl) {
     const side = paneEl.dataset.pane;
+    const pane = state.panes[side];
     const select = $(".server-select", paneEl);
-    const current = state.panes[side].connectionId;
-    let html = '<option value="">Choose a server…</option>';
+    let html = '<option value="">Choose an endpoint…</option>';
+    const localLabel = pane.mode === "local" && pane.localRootName
+      ? "Local computer · " + pane.localRootName
+      : "Local computer…";
+    html += '<option value="__local__"' + (pane.mode === "local" ? " selected" : "") + '>' + escapeHTML(localLabel) + '</option>';
     state.connections.forEach(function (c) {
-      html += '<option value="' + c.id + '"' + (Number(current) === Number(c.id) ? " selected" : "") + '>' + escapeHTML(c.name) + '</option>';
+      html += '<option value="' + c.id + '"' + (pane.mode === "remote" && Number(pane.connectionId) === Number(c.id) ? " selected" : "") + '>' + escapeHTML(c.name) + '</option>';
     });
     select.innerHTML = html;
   });
@@ -316,11 +332,103 @@ function renderServerSelects() {
 async function connectPane(side, id) {
   const c = connectionById(id);
   if (!c) return;
-  state.panes[side].connectionId = Number(id);
-  state.panes[side].path = normalizePath(c.default_path || "/");
-  state.panes[side].selected = [];
+  const pane = state.panes[side];
+  pane.mode = "remote";
+  pane.connectionId = Number(id);
+  pane.path = normalizePath(c.default_path || "/");
+  pane.selected = [];
+  pane.localRoot = null;
+  pane.localRootName = "";
+  pane.localHandles = new Map();
   renderServerSelects();
   await loadPane(side);
+}
+
+function localDeckSupported() {
+  return window.isSecureContext && typeof window.showDirectoryPicker === "function";
+}
+
+async function openLocalDeck(side) {
+  if (!localDeckSupported()) {
+    renderServerSelects();
+    toast("Local computer access requires Chrome/Edge in a secure HTTPS context (or localhost).", "error");
+    return;
+  }
+  try {
+    const root = await window.showDirectoryPicker({ mode: "readwrite", id: "simplescp-" + side });
+    const pane = state.panes[side];
+    pane.mode = "local";
+    pane.connectionId = 0;
+    pane.path = "/";
+    pane.selected = [];
+    pane.localRoot = root;
+    pane.localRootName = root.name || "Local";
+    pane.localHandles = new Map();
+    renderServerSelects();
+    await loadPane(side);
+  } catch (err) {
+    renderServerSelects();
+    if (!err || err.name !== "AbortError") {
+      toast(err && err.message ? err.message : "Unable to open local folder.", "error");
+    }
+  }
+}
+
+async function localDirectoryForPath(pane, rawPath) {
+  if (!pane.localRoot) throw new Error("Choose a local folder first.");
+  let current = pane.localRoot;
+  const parts = normalizePath(rawPath).split("/").filter(Boolean);
+  for (const part of parts) {
+    current = await current.getDirectoryHandle(part);
+  }
+  return current;
+}
+
+function updatePaneModeUI(side) {
+  const pane = state.panes[side];
+  const el = paneElement(side);
+  const local = pane.mode === "local";
+  el.classList.toggle("local-pane", local);
+  $(".path-prefix", el).textContent = local ? "local:" : "sftp:";
+  $(".upload-btn", el).textContent = local ? "⌂ Change root" : "↑ Upload";
+  const subtitle = $(".pane-identity div span", el);
+  if (subtitle) subtitle.textContent = local ? "Local computer" : "Remote filesystem";
+  $(".path-input", el).setAttribute("aria-label", local ? "Local folder path" : "Remote path");
+}
+
+async function loadLocalPane(side) {
+  const pane = state.panes[side];
+  const el = paneElement(side);
+  const tbody = $(".file-list", el);
+  if (!pane.localRoot) {
+    tbody.innerHTML = '<tr><td colspan="3" class="muted empty-pane-message"><strong>No local folder granted</strong><span>Choose Local computer… and grant a folder.</span></td></tr>';
+    return;
+  }
+
+  setStatus("Reading local folder…", "busy");
+  try {
+    const dir = await localDirectoryForPath(pane, pane.path);
+    const entries = [];
+    pane.localHandles = new Map();
+    for await (const [name, handle] of dir.entries()) {
+      const entryPath = normalizePath(pane.path + "/" + name);
+      pane.localHandles.set(entryPath, handle);
+      if (handle.kind === "directory") {
+        entries.push({ name:name, path:entryPath, is_dir:true, size:0, mod_time:new Date(0).toISOString() });
+      } else {
+        const file = await handle.getFile();
+        entries.push({ name:name, path:entryPath, is_dir:false, size:file.size, mod_time:new Date(file.lastModified).toISOString() });
+      }
+    }
+    $(".path-input", el).value = pane.path;
+    renderBreadcrumbs(side);
+    renderEntries(side, entries);
+    filterPane(side, $(".pane-search", el)?.value || "");
+    setStatus("Ready", "ready");
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="3" class="muted">' + escapeHTML(err.message || "Unable to read local folder") + '</td></tr>';
+    setStatus("Local folder unavailable", "error");
+  }
 }
 
 async function withTrustRetry(side, task) {
@@ -344,14 +452,20 @@ async function loadPane(side) {
   const pane = state.panes[side];
   const el = paneElement(side);
   const tbody = $(".file-list", el);
+  updatePaneModeUI(side);
   $(".path-input", el).value = pane.path;
   pane.selected = [];
   state.selectionAnchor[side] = null;
   renderBreadcrumbs(side);
   updatePaneSelection(side);
 
+  if (pane.mode === "local") {
+    await loadLocalPane(side);
+    return;
+  }
+
   if (!pane.connectionId) {
-    tbody.innerHTML = '<tr><td colspan="3" class="muted empty-pane-message"><strong>No server open</strong><span>Choose a saved server above or open one from the sidebar.</span></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="3" class="muted empty-pane-message"><strong>No endpoint open</strong><span>Choose a saved server or Local computer… above.</span></td></tr>';
     return;
   }
 
@@ -418,7 +532,8 @@ function rowItem(row) {
     path: row.dataset.path,
     name: row.dataset.name,
     isDir: row.dataset.dir === "1",
-    size: Number(row.dataset.size || 0)
+    size: Number(row.dataset.size || 0),
+    handle: state.panes[side].mode === "local" ? state.panes[side].localHandles.get(row.dataset.path) || null : null
   };
 }
 
@@ -485,11 +600,13 @@ function updatePaneSelection(side) {
     $(".selection-text", el).textContent = count + " items selected";
   }
 
-  $(".download-btn", el).disabled = count !== 1 || selected[0].isDir;
+  $(".download-btn", el).disabled = pane.mode === "local" || count !== 1 || selected[0]?.isDir;
   $(".delete-btn", el).disabled = count === 0;
   $(".rename-btn", el).disabled = count !== 1;
+
   const other = state.panes[side === "left" ? "right" : "left"];
-  $(".copy-to-other", el).disabled = count === 0 || selected.some(function (item) { return item.isDir; }) || !other.connectionId;
+  const destinationReady = other.mode === "local" ? Boolean(other.localRoot) : Boolean(other.connectionId);
+  $(".copy-to-other", el).disabled = count === 0 || selected.some(function (item) { return item.isDir; }) || !destinationReady;
 }
 
 function wirePanes() {
@@ -497,12 +614,16 @@ function wirePanes() {
     const side = el.dataset.pane;
     el.addEventListener("pointerdown", function () { setActivePane(side); });
 
-    $(".server-select", el).addEventListener("change", function (e) {
-      const id = Number(e.target.value);
-      if (id) connectPane(side, id);
-      else {
-        state.panes[side] = { connectionId: 0, path: "/", selected: [] };
-        loadPane(side);
+    $(".server-select", el).addEventListener("change", async function (e) {
+      const value = e.target.value;
+      if (value === "__local__") {
+        await openLocalDeck(side);
+      } else if (value) {
+        await connectPane(side, Number(value));
+      } else {
+        state.panes[side] = makePaneState();
+        renderServerSelects();
+        await loadPane(side);
       }
     });
 
@@ -522,6 +643,10 @@ function wirePanes() {
       loadPane(side);
     });
     $(".upload-btn", el).addEventListener("click", function () {
+      if (state.panes[side].mode === "local") {
+        openLocalDeck(side);
+        return;
+      }
       if (!state.panes[side].connectionId) return toast("Choose a server first.", "error");
       $(".upload-input", el).click();
     });
@@ -530,7 +655,7 @@ function wirePanes() {
     ["dragenter", "dragover"].forEach(function (eventName) {
       el.addEventListener(eventName, function (e) {
         e.preventDefault();
-        if (!state.panes[side].connectionId) return;
+        if (state.panes[side].mode === "remote" && !state.panes[side].connectionId) return;
         el.classList.add("drag-active");
       });
     });
@@ -541,6 +666,10 @@ function wirePanes() {
       });
     });
     el.addEventListener("drop", function (e) {
+      if (state.panes[side].mode === "local") {
+        toast("Use the Local computer root selector to change local access.", "error");
+        return;
+      }
       if (!state.panes[side].connectionId) {
         toast("Choose a server before dropping files.", "error");
         return;
@@ -584,7 +713,9 @@ async function uploadFiles(side, files) {
 
 async function createFolder(side) {
   const pane = state.panes[side];
-  if (!pane.connectionId) return toast("Choose a server first.", "error");
+  if (pane.mode === "remote" && !pane.connectionId) return toast("Choose a server first.", "error");
+  if (pane.mode === "local" && !pane.localRoot) return toast("Choose a local folder first.", "error");
+
   const name = await showActionDialog({
     eyebrow: "NEW FOLDER",
     title: "Create a folder",
@@ -597,18 +728,40 @@ async function createFolder(side) {
   if (!name) return;
   const cleanName = name.trim().replaceAll("/", "");
   if (!cleanName || cleanName === "." || cleanName === "..") return toast("Invalid folder name.", "error");
+
   try {
-    await withTrustRetry(side, function () {
-      return api("/api/connections/" + pane.connectionId + "/mkdir", {
-        method: "POST",
-        body: { path: normalizePath(pane.path + "/" + cleanName) }
+    if (pane.mode === "local") {
+      const dir = await localDirectoryForPath(pane, pane.path);
+      await dir.getDirectoryHandle(cleanName, { create:true });
+    } else {
+      await withTrustRetry(side, function () {
+        return api("/api/connections/" + pane.connectionId + "/mkdir", {
+          method: "POST",
+          body: { path: normalizePath(pane.path + "/" + cleanName) }
+        });
       });
-    });
+    }
     addActivity("folder", "Created folder", cleanName + " in " + pane.path, "success");
     await loadPane(side);
   } catch (err) {
     addActivity("folder", "Create folder failed", err.message, "error");
     toast(err.message, "error");
+  }
+}
+
+async function copyLocalHandle(handle, destinationDir, destinationName) {
+  if (!handle) throw new Error("Local file handle is no longer available.");
+  if (handle.kind === "file") {
+    const src = await handle.getFile();
+    const destHandle = await destinationDir.getFileHandle(destinationName, { create:true });
+    const writable = await destHandle.createWritable();
+    await writable.write(src);
+    await writable.close();
+    return;
+  }
+  const destDir = await destinationDir.getDirectoryHandle(destinationName, { create:true });
+  for await (const [childName, child] of handle.entries()) {
+    await copyLocalHandle(child, destDir, childName);
   }
 }
 
@@ -628,14 +781,23 @@ async function renameSelected(side) {
   if (!nextName || nextName === selected.name) return;
   const cleanName = nextName.trim().replaceAll("/", "");
   if (!cleanName || cleanName === "." || cleanName === "..") return toast("Invalid name.", "error");
+
   try {
-    await api("/api/connections/" + pane.connectionId + "/rename", {
-      method: "POST",
-      body: {
-        old_path: selected.path,
-        new_path: normalizePath(pane.path + "/" + cleanName)
+    if (pane.mode === "local") {
+      const parent = await localDirectoryForPath(pane, pane.path);
+      const handle = selected.handle || pane.localHandles.get(selected.path);
+      if (handle && typeof handle.move === "function") {
+        await handle.move(parent, cleanName);
+      } else {
+        await copyLocalHandle(handle, parent, cleanName);
+        await parent.removeEntry(selected.name, { recursive:selected.isDir });
       }
-    });
+    } else {
+      await api("/api/connections/" + pane.connectionId + "/rename", {
+        method: "POST",
+        body: { old_path:selected.path, new_path:normalizePath(pane.path + "/" + cleanName) }
+      });
+    }
     toast("Renamed.", "success");
     addActivity("rename", "Renamed item", selected.name + " → " + cleanName, "success");
     await loadPane(side);
@@ -647,7 +809,7 @@ async function renameSelected(side) {
 
 function downloadSelected(side) {
   const pane = state.panes[side];
-  if (pane.selected.length !== 1 || pane.selected[0].isDir) return;
+  if (pane.mode === "local" || pane.selected.length !== 1 || pane.selected[0].isDir) return;
   location.href = "/api/connections/" + pane.connectionId + "/download?path=" + encodeURIComponent(pane.selected[0].path);
 }
 
@@ -656,27 +818,35 @@ async function deleteSelected(side) {
   const selected = pane.selected.slice();
   if (!selected.length) return;
   const label = selected.length === 1 ? selected[0].name : selected.length + " selected items";
+  const locationLabel = pane.mode === "local" ? "local computer" : "remote server";
   const confirmed = await showActionDialog({
     eyebrow: "DESTRUCTIVE ACTION",
     title: selected.length === 1 ? "Delete " + label + "?" : "Delete selected items?",
-    description: selected.length === 1 ? "This item will be permanently removed from the remote server." : selected.length + " selected items will be permanently removed from the remote server.",
+    description: selected.length === 1 ? "This item will be permanently removed from the " + locationLabel + "." : selected.length + " selected items will be permanently removed from the " + locationLabel + ".",
     warning: selected.some(function (item) { return item.isDir; }) ? "Selected folders will be deleted recursively, including everything inside them." : "This action cannot be undone.",
     confirmLabel: "Delete",
     danger: true
   });
   if (!confirmed) return;
+
   const activityId = addActivity("delete", "Delete", selected.length + " item" + (selected.length === 1 ? "" : "s") + " from " + pane.path, "busy");
   try {
     setStatus("Deleting " + selected.length + " item" + (selected.length === 1 ? "" : "s") + "…", "busy");
-    for (const item of selected) {
-      await api("/api/connections/" + pane.connectionId + "/delete", {
-        method: "POST",
-        body: { path: item.path, recursive: item.isDir }
-      });
+    if (pane.mode === "local") {
+      const dir = await localDirectoryForPath(pane, pane.path);
+      for (const item of selected) {
+        await dir.removeEntry(item.name, { recursive:item.isDir });
+      }
+    } else {
+      for (const item of selected) {
+        await api("/api/connections/" + pane.connectionId + "/delete", {
+          method: "POST",
+          body: { path:item.path, recursive:item.isDir }
+        });
+      }
     }
-    toast("Deleted " + selected.length + " item" + (selected.length === 1 ? "" : "s") + ".", "success");
     setStatus("Delete complete", "success");
-    updateActivity(activityId, "success", selected.length + " item" + (selected.length === 1 ? "" : "s") + " deleted from " + pane.path);
+    updateActivity(activityId, "success", selected.length + " item" + (selected.length === 1 ? "" : "s") + " deleted");
     await loadPane(side);
   } catch (err) {
     setStatus("Delete failed", "error");
@@ -685,30 +855,93 @@ async function deleteSelected(side) {
   }
 }
 
+async function remoteResponse(source, item) {
+  const response = await fetch("/api/connections/" + source.connectionId + "/download?path=" + encodeURIComponent(item.path));
+  if (response.status === 401) {
+    location.href = "/login";
+    throw new Error("Session expired");
+  }
+  if (!response.ok) {
+    let message = "Unable to download remote file.";
+    try {
+      const data = await response.json();
+      if (data && data.error) message = data.error;
+    } catch (_) {}
+    throw new Error(message);
+  }
+  return response;
+}
+
+async function copyLocalToRemote(source, destination, destinationSide, selected) {
+  for (const item of selected) {
+    const handle = item.handle || source.localHandles.get(item.path);
+    if (!handle || handle.kind !== "file") throw new Error("Local file handle is unavailable.");
+    const file = await handle.getFile();
+    const form = new FormData();
+    form.append("files", file, item.name);
+    await withTrustRetry(destinationSide, function () {
+      return api("/api/connections/" + destination.connectionId + "/upload?path=" + encodeURIComponent(destination.path), { method:"POST", body:form });
+    });
+  }
+}
+
+async function copyRemoteToLocal(source, destination, selected) {
+  const dir = await localDirectoryForPath(destination, destination.path);
+  for (const item of selected) {
+    const response = await remoteResponse(source, item);
+    const destHandle = await dir.getFileHandle(item.name, { create:true });
+    const writable = await destHandle.createWritable();
+    if (response.body && typeof response.body.pipeTo === "function") {
+      await response.body.pipeTo(writable);
+    } else {
+      await writable.write(await response.blob());
+      await writable.close();
+    }
+  }
+}
+
+async function copyLocalToLocal(source, destination, selected) {
+  const dir = await localDirectoryForPath(destination, destination.path);
+  for (const item of selected) {
+    const handle = item.handle || source.localHandles.get(item.path);
+    await copyLocalHandle(handle, dir, item.name);
+  }
+}
+
 async function copySelected(side) {
   const source = state.panes[side];
   const destinationSide = side === "left" ? "right" : "left";
   const destination = state.panes[destinationSide];
   const selected = source.selected.slice();
-  if (!selected.length || selected.some(function (item) { return item.isDir; }) || !destination.connectionId) return;
+  const destinationReady = destination.mode === "local" ? Boolean(destination.localRoot) : Boolean(destination.connectionId);
+  if (!selected.length || selected.some(function (item) { return item.isDir; }) || !destinationReady) return;
+
   setStatus("Copying " + selected.length + " file" + (selected.length === 1 ? "" : "s") + "…", "busy");
-  const sourceConnection = connectionById(source.connectionId);
-  const destinationConnection = connectionById(destination.connectionId);
-  const activityId = addActivity("copy", "Server-to-server copy", selected.length + " file" + (selected.length === 1 ? "" : "s") + " · " + (sourceConnection ? sourceConnection.name : "source") + " → " + (destinationConnection ? destinationConnection.name : "destination"), "busy");
+  const sourceLabel = source.mode === "local" ? "Local computer" : (connectionById(source.connectionId)?.name || "server");
+  const destinationLabel = destination.mode === "local" ? "Local computer" : (connectionById(destination.connectionId)?.name || "server");
+  const activityId = addActivity("copy", "Transfer", selected.length + " file" + (selected.length === 1 ? "" : "s") + " · " + sourceLabel + " → " + destinationLabel, "busy");
 
   try {
-    for (const item of selected) {
-      await api("/api/transfer", {
-        method: "POST",
-        body: {
-          source_connection_id: source.connectionId,
-          source_path: item.path,
-          destination_connection_id: destination.connectionId,
-          destination_path: normalizePath(destination.path + "/" + item.name)
-        }
-      });
+    if (source.mode === "local" && destination.mode === "remote") {
+      await copyLocalToRemote(source, destination, destinationSide, selected);
+    } else if (source.mode === "remote" && destination.mode === "local") {
+      await copyRemoteToLocal(source, destination, selected);
+    } else if (source.mode === "local" && destination.mode === "local") {
+      await copyLocalToLocal(source, destination, selected);
+    } else {
+      for (const item of selected) {
+        await api("/api/transfer", {
+          method: "POST",
+          body: {
+            source_connection_id: source.connectionId,
+            source_path: item.path,
+            destination_connection_id: destination.connectionId,
+            destination_path: normalizePath(destination.path + "/" + item.name)
+          }
+        });
+      }
     }
-    toast("Copied " + selected.length + " file" + (selected.length === 1 ? "" : "s") + ".", "success");
+    toast("Transfer complete.", "success");
     setStatus("Transfer complete", "success");
     updateActivity(activityId, "success", selected.length + " file" + (selected.length === 1 ? "" : "s") + " copied successfully");
     await loadPane(destinationSide);
@@ -800,7 +1033,7 @@ async function deleteConnection() {
     await api("/api/connections/" + id, { method: "DELETE" });
     $("#connectionDialog").close();
     ["left", "right"].forEach(function (side) {
-      if (state.panes[side].connectionId === id) state.panes[side] = { connectionId: 0, path: "/", selected: [] };
+      if (state.panes[side].mode === "remote" && state.panes[side].connectionId === id) state.panes[side] = makePaneState();
     });
     await loadConnections();
     await Promise.all([loadPane("left"), loadPane("right")]);
@@ -837,6 +1070,88 @@ function wireDialogs() {
       await pending.retry();
     } catch (err) {
       toast(err.message, "error");
+    }
+  });
+}
+
+async function refreshUpdateStatus() {
+  const dialog = $("#updateDialog");
+  if (!dialog) return;
+  $("#updateState").textContent = "Checking…";
+  $("#installUpdateBtn").disabled = true;
+  try {
+    const status = await api("/api/update");
+    $("#updateCurrent").textContent = status.current || "unknown";
+    $("#updateLatest").textContent = status.latest || "unknown";
+    $("#updateArch").textContent = status.architecture || "unknown";
+    $("#updateState").textContent = status.update_available ? "Update available" : "Current";
+    $("#updateMessage").textContent = status.update_available
+      ? "A verified release is available. Installing it updates this same container and preserves a rollback binary."
+      : "This container is already on the latest published release.";
+    $("#installUpdateBtn").disabled = !status.update_available;
+    $("#rollbackUpdateBtn").disabled = !status.rollback_available;
+  } catch (err) {
+    $("#updateState").textContent = "Check failed";
+    $("#updateMessage").textContent = err.message;
+  }
+}
+
+async function waitForRestart() {
+  setStatus("Restarting SimpleSCP…", "busy");
+  await new Promise(function (resolve) { setTimeout(resolve, 1800); });
+  for (let i = 0; i < 30; i++) {
+    try {
+      const response = await fetch("/healthz", { cache:"no-store" });
+      if (response.ok) {
+        location.reload();
+        return;
+      }
+    } catch (_) {}
+    await new Promise(function (resolve) { setTimeout(resolve, 1000); });
+  }
+  $("#updateMessage").textContent = "Update was staged. Reload the page after the container finishes restarting.";
+}
+
+function wireUpdater() {
+  const button = $("#updateBtn");
+  const dialog = $("#updateDialog");
+  if (!button || !dialog) return;
+
+  button.addEventListener("click", function () {
+    dialog.showModal();
+    refreshUpdateStatus();
+  });
+  $(".update-close").forEach(function (close) {
+    close.addEventListener("click", function () { dialog.close(); });
+  });
+  $("#installUpdateBtn").addEventListener("click", async function () {
+    this.disabled = true;
+    $("#rollbackUpdateBtn").disabled = true;
+    $("#updateState").textContent = "Installing…";
+    $("#updateMessage").textContent = "Downloading and verifying the release binary…";
+    try {
+      const result = await api("/api/update/install", { method:"POST" });
+      $("#updateState").textContent = "Installed " + (result.version || "");
+      $("#updateMessage").textContent = "Verified update installed. Restarting this container…";
+      waitForRestart();
+    } catch (err) {
+      $("#updateState").textContent = "Install failed";
+      $("#updateMessage").textContent = err.message;
+      this.disabled = false;
+    }
+  });
+  $("#rollbackUpdateBtn").addEventListener("click", async function () {
+    this.disabled = true;
+    $("#installUpdateBtn").disabled = true;
+    $("#updateState").textContent = "Rolling back…";
+    try {
+      await api("/api/update/rollback", { method:"POST" });
+      $("#updateMessage").textContent = "Rollback staged. Restarting this container…";
+      waitForRestart();
+    } catch (err) {
+      $("#updateState").textContent = "Rollback failed";
+      $("#updateMessage").textContent = err.message;
+      refreshUpdateStatus();
     }
   });
 }
@@ -922,6 +1237,7 @@ document.addEventListener("DOMContentLoaded", async function () {
   wirePanes();
   wirePremiumControls();
   wireDialogs();
+  wireUpdater();
   $("#logoutBtn").addEventListener("click", logout);
   $("#refreshConnections").addEventListener("click", loadConnections);
   try {
