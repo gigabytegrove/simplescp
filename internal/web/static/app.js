@@ -104,7 +104,7 @@ function connectionById(id) {
 
 function setActivePane(side) {
   state.activePane = side;
-  $(".file-pane").forEach(function (pane) {
+  document.querySelectorAll(".file-pane").forEach(function (pane) {
     pane.classList.toggle("active-pane", pane.dataset.pane === side);
   });
 }
