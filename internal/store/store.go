@@ -133,6 +133,12 @@ func (s *Store) BootstrapAdmin(username, password string) error {
 	if count > 0 {
 		return nil
 	}
+	if strings.TrimSpace(password) == "" {
+		return errors.New("initial admin password is required on a fresh database")
+	}
+	if len(password) < 12 {
+		return errors.New("initial admin password must be at least 12 characters")
+	}
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return errors.New("admin username is empty")
