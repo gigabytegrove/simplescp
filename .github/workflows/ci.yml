@@ -122,10 +122,16 @@ jobs:
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
               -ldflags="-s -w -X github.com/gigabytegrove/simplescp/internal/buildinfo.Version=edge -X github.com/gigabytegrove/simplescp/internal/buildinfo.Commit=${GITHUB_SHA}" \
               -o "dist/simplescp-linux-$arch" ./cmd/simplescp
+            CGO_ENABLED=0 GOOS=windows GOARCH="$arch" go build -trimpath \
+              -ldflags="-s -w" -o "dist/simplescp-local-windows-$arch.exe" ./cmd/simplescp-local
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
+              -ldflags="-s -w" -o "dist/simplescp-local-linux-$arch" ./cmd/simplescp-local
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -trimpath \
+              -ldflags="-s -w" -o "dist/simplescp-local-darwin-$arch" ./cmd/simplescp-local
           done
           (
             cd dist
-            sha256sum simplescp-linux-* > SHA256SUMS
+            sha256sum simplescp-* > SHA256SUMS
           )
 
       - name: Publish edge release
@@ -166,10 +172,16 @@ jobs:
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
               -ldflags="-s -w -X github.com/gigabytegrove/simplescp/internal/buildinfo.Version=${GITHUB_REF_NAME} -X github.com/gigabytegrove/simplescp/internal/buildinfo.Commit=${GITHUB_SHA}" \
               -o "dist/simplescp-linux-$arch" ./cmd/simplescp
+            CGO_ENABLED=0 GOOS=windows GOARCH="$arch" go build -trimpath \
+              -ldflags="-s -w" -o "dist/simplescp-local-windows-$arch.exe" ./cmd/simplescp-local
+            CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
+              -ldflags="-s -w" -o "dist/simplescp-local-linux-$arch" ./cmd/simplescp-local
+            CGO_ENABLED=0 GOOS=darwin GOARCH="$arch" go build -trimpath \
+              -ldflags="-s -w" -o "dist/simplescp-local-darwin-$arch" ./cmd/simplescp-local
           done
           (
             cd dist
-            sha256sum simplescp-linux-* > SHA256SUMS
+            sha256sum simplescp-* > SHA256SUMS
           )
 
       - name: Publish GitHub release
