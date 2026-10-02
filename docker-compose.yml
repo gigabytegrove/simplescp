@@ -1,0 +1,22 @@
+services:
+  simplescp:
+    build: .
+    image: ghcr.io/gigabytegrove/simplescp:latest
+    container_name: simplescp
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      SIMPLE_SCP_LISTEN: ":8080"
+      SIMPLE_SCP_DATA_DIR: "/data"
+      SIMPLE_SCP_MASTER_KEY: "${SIMPLE_SCP_MASTER_KEY:?set SIMPLE_SCP_MASTER_KEY in .env}"
+      SIMPLE_SCP_ADMIN_USER: "${SIMPLE_SCP_ADMIN_USER:-admin}"
+      SIMPLE_SCP_ADMIN_PASSWORD: "${SIMPLE_SCP_ADMIN_PASSWORD:?set SIMPLE_SCP_ADMIN_PASSWORD in .env}"
+      SIMPLE_SCP_COOKIE_SECURE: "${SIMPLE_SCP_COOKIE_SECURE:-false}"
+      SIMPLE_SCP_SESSION_TTL: "${SIMPLE_SCP_SESSION_TTL:-24h}"
+      SIMPLE_SCP_SSH_TIMEOUT: "${SIMPLE_SCP_SSH_TIMEOUT:-15s}"
+    volumes:
+      - simplescp_data:/data
+
+volumes:
+  simplescp_data:
