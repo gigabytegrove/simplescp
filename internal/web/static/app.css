@@ -416,3 +416,13 @@ kbd{
   .activity-body{height:190px}
   .activity-drawer.collapsed{transform:translateY(190px)}
 }
+
+.action-dialog{width:min(500px,calc(100vw - 28px));padding:0 20px}
+.action-dialog form{padding:0}
+.action-dialog label{margin:0 0 18px}
+.action-warning{
+  margin:0 0 18px;padding:11px 12px;border:1px solid var(--danger-line);border-radius:8px;
+  background:var(--danger-soft);color:#f2a5ad;font-size:.72rem;line-height:1.55
+}
+.action-dialog .dialog-actions{margin-top:2px}
+.action-dialog .dialog-actions .danger{min-width:112px}
