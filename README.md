@@ -34,27 +34,12 @@ mkdir -p simplescp
 cd simplescp
 ```
 
-Download `docker-compose.yml` and `.env.example` from the repository into that directory, then rename `.env.example` to `.env`.
-
-For an authenticated command-line download from the current private repository:
+Download the public Compose file and environment template:
 
 ```bash
-export GITHUB_TOKEN="YOUR_GITHUB_TOKEN"
-
-curl -fsSL \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -H "Accept: application/vnd.github.raw+json" \
-  https://api.github.com/repos/gigabytegrove/simplescp/contents/docker-compose.yml \
-  -o docker-compose.yml
-
-curl -fsSL \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -H "Accept: application/vnd.github.raw+json" \
-  https://api.github.com/repos/gigabytegrove/simplescp/contents/.env.example \
-  -o .env
+curl -fsSLO https://raw.githubusercontent.com/gigabytegrove/simplescp/main/docker-compose.yml
+curl -fsSL https://raw.githubusercontent.com/gigabytegrove/simplescp/main/.env.example -o .env
 ```
-
-If the repository is made public later, the files can also be downloaded directly without authentication.
 
 Generate a master encryption key:
 
@@ -69,14 +54,6 @@ SIMPLE_SCP_MASTER_KEY=PASTE_THE_GENERATED_KEY_HERE
 SIMPLE_SCP_ADMIN_USER=admin
 SIMPLE_SCP_ADMIN_PASSWORD=SET_A_STRONG_PASSWORD
 ```
-
-If the GHCR package is private, authenticate Docker before the first pull:
-
-```bash
-echo "$GHCR_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
-```
-
-The token needs permission to read packages. This login step is not needed if the SimpleSCP package is public.
 
 Start SimpleSCP:
 
@@ -105,13 +82,13 @@ docker compose pull
 docker compose up -d
 ```
 
-The default image is:
+The public container image is:
 
 ```text
 ghcr.io/gigabytegrove/simplescp:latest
 ```
 
-Set `SIMPLE_SCP_VERSION` in `.env` if you want to pin a specific release instead of `latest`.
+Set `SIMPLE_SCP_VERSION` in `.env` if you want to pin a specific release instead of tracking `latest`.
 
 ## Production HTTPS
 
@@ -188,9 +165,17 @@ A database backup without its matching master key cannot decrypt saved SSH crede
 
 ## Security
 
-See [SECURITY.md](SECURITY.md) for the security model and production deployment guidance.
+See [SECURITY.md](SECURITY.md) for the security model, supported deployment assumptions, and vulnerability-reporting process.
 
 CI runs tests, `go vet`, `govulncheck`, a native build, and a Docker build. Known reachable Go vulnerabilities fail the pipeline.
+
+Please do not post exploitable vulnerabilities, credentials, private keys, database files, or master keys in a public issue.
+
+## Contributing
+
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, testing expectations, security requirements, and pull-request guidance.
+
+For normal deployment, use Docker Compose rather than building from source.
 
 ## Development from source
 
