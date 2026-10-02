@@ -2,7 +2,9 @@ package web
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
 	"encoding/base64"
@@ -134,6 +136,44 @@ func randomWebToken(size int) (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
+func (a *app) newLoginCSRF() (string, error) {
+	nonce, err := randomWebToken(24)
+	if err != nil {
+		return "", err
+	}
+	issued := strconv.FormatInt(time.Now().UTC().Unix(), 10)
+	payload := issued + "." + nonce
+	mac := hmac.New(sha256.New, a.cfg.MasterKey)
+	_, _ = mac.Write([]byte("simplescp-login-csrf:" + payload))
+	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return payload + "." + signature, nil
+}
+
+func (a *app) validLoginCSRF(token string) bool {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	issuedUnix, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		return false
+	}
+	issued := time.Unix(issuedUnix, 0).UTC()
+	now := time.Now().UTC()
+	if issued.After(now.Add(time.Minute)) || now.Sub(issued) > 10*time.Minute {
+		return false
+	}
+	payload := parts[0] + "." + parts[1]
+	mac := hmac.New(sha256.New, a.cfg.MasterKey)
+	_, _ = mac.Write([]byte("simplescp-login-csrf:" + payload))
+	expected := mac.Sum(nil)
+	provided, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return false
+	}
+	return hmac.Equal(expected, provided)
+}
+
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil && host != "" {
@@ -209,15 +249,11 @@ func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w,r,"/",http.StatusSeeOther)
 		return
 	}
-	token, err := randomWebToken(24)
+	token, err := a.newLoginCSRF()
 	if err != nil {
 		http.Error(w, "Unable to initialize login", http.StatusInternalServerError)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{
-		Name:"simplescp_login_csrf", Value:token, Path:"/login",
-		MaxAge:600, HttpOnly:true, Secure:a.cfg.CookieSecure, SameSite:http.SameSiteStrictMode,
-	})
 	w.Header().Set("Content-Type","text/html; charset=utf-8")
 	_ = a.templates.ExecuteTemplate(w,"login.html",map[string]any{"CSRF":token})
 }
@@ -229,9 +265,19 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	csrfCookie, err := r.Cookie("simplescp_login_csrf")
-	if err != nil || !secureEqual(csrfCookie.Value, r.FormValue("csrf_token")) {
-		writeError(w, http.StatusForbidden, "invalid login request")
+	loginToken := r.FormValue("csrf_token")
+	if !a.validLoginCSRF(loginToken) {
+		token, tokenErr := a.newLoginCSRF()
+		if tokenErr != nil {
+			http.Error(w, "Unable to initialize login", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type","text/html; charset=utf-8")
+		w.WriteHeader(http.StatusForbidden)
+		_ = a.templates.ExecuteTemplate(w,"login.html",map[string]any{
+			"Error":"Your sign-in form expired. Please try again.",
+			"CSRF":token,
+		})
 		return
 	}
 
@@ -250,7 +296,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 		_ = a.templates.ExecuteTemplate(w,"login.html",map[string]any{
 			"Error":"Invalid username or password.",
-			"CSRF":csrfCookie.Value,
+			"CSRF":loginToken,
 		})
 		return
 	}
@@ -261,10 +307,6 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w,"Unable to create session",http.StatusInternalServerError)
 		return
 	}
-	http.SetCookie(w,&http.Cookie{
-		Name:"simplescp_login_csrf",Value:"",Path:"/login",MaxAge:-1,HttpOnly:true,
-		Secure:a.cfg.CookieSecure,SameSite:http.SameSiteStrictMode,
-	})
 	http.SetCookie(w,&http.Cookie{
 		Name:"simplescp_session",Value:token,Path:"/",Expires:expires,MaxAge:int(a.cfg.SessionTTL.Seconds()),HttpOnly:true,
 		Secure:a.cfg.CookieSecure,SameSite:http.SameSiteStrictMode,
