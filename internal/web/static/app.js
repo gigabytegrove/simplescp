@@ -130,7 +130,7 @@ function renderBreadcrumbs(side) {
       escapeHTML(crumb.label) + '</button>' + (last ? "" : '<span class="breadcrumb-sep">›</span>');
   }).join("");
 
-  $(".breadcrumb", host).forEach(function (button) {
+  host.querySelectorAll(".breadcrumb").forEach(function (button) {
     button.addEventListener("click", function () {
       pane.path = button.dataset.path;
       loadPane(side);
@@ -155,7 +155,7 @@ function filterPane(side, query) {
   const q = String(query || "").trim().toLowerCase();
   const el = paneElement(side);
   let visible = 0;
-  $(".entry-row", el).forEach(function (row) {
+  el.querySelectorAll(".entry-row").forEach(function (row) {
     const show = !q || String(row.dataset.name || "").toLowerCase().includes(q);
     row.hidden = !show;
     if (show) visible++;
@@ -493,7 +493,7 @@ function updatePaneSelection(side) {
 }
 
 function wirePanes() {
-  $(".file-pane").forEach(function (el) {
+  document.querySelectorAll(".file-pane").forEach(function (el) {
     const side = el.dataset.pane;
     el.addEventListener("pointerdown", function () { setActivePane(side); });
 
@@ -858,7 +858,7 @@ function wirePremiumControls() {
     resolveActionDialog(inputVisible ? $("#actionInput").value.trim() : true);
   });
 
-  $(".action-cancel").forEach(function (button) {
+  document.querySelectorAll(".action-cancel").forEach(function (button) {
     button.addEventListener("click", function () { resolveActionDialog(null); });
   });
 
