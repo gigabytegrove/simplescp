@@ -19,7 +19,11 @@ type Config struct {
 	AdminPassword string
 	CookieSecure  bool
 	SessionTTL    time.Duration
-	SSHTimeout    time.Duration
+	SSHTimeout             time.Duration
+	MaxUploadBytes         int64
+	MaxConcurrentTransfers int
+	LoginMaxAttempts       int
+	LoginWindow            time.Duration
 }
 
 func Load() (Config, error) {
@@ -58,6 +62,23 @@ func Load() (Config, error) {
 	cfg.SSHTimeout, err = time.ParseDuration(env("SIMPLE_SCP_SSH_TIMEOUT", "15s"))
 	if err != nil || cfg.SSHTimeout < time.Second {
 		return Config{}, errors.New("SIMPLE_SCP_SSH_TIMEOUT must be a valid duration of at least 1s")
+	}
+
+	cfg.MaxUploadBytes, err = strconv.ParseInt(env("SIMPLE_SCP_MAX_UPLOAD_BYTES", "10737418240"), 10, 64)
+	if err != nil || cfg.MaxUploadBytes < 1<<20 {
+		return Config{}, errors.New("SIMPLE_SCP_MAX_UPLOAD_BYTES must be an integer of at least 1048576")
+	}
+	cfg.MaxConcurrentTransfers, err = strconv.Atoi(env("SIMPLE_SCP_MAX_CONCURRENT_TRANSFERS", "4"))
+	if err != nil || cfg.MaxConcurrentTransfers < 1 || cfg.MaxConcurrentTransfers > 64 {
+		return Config{}, errors.New("SIMPLE_SCP_MAX_CONCURRENT_TRANSFERS must be between 1 and 64")
+	}
+	cfg.LoginMaxAttempts, err = strconv.Atoi(env("SIMPLE_SCP_LOGIN_MAX_ATTEMPTS", "5"))
+	if err != nil || cfg.LoginMaxAttempts < 3 || cfg.LoginMaxAttempts > 100 {
+		return Config{}, errors.New("SIMPLE_SCP_LOGIN_MAX_ATTEMPTS must be between 3 and 100")
+	}
+	cfg.LoginWindow, err = time.ParseDuration(env("SIMPLE_SCP_LOGIN_WINDOW", "15m"))
+	if err != nil || cfg.LoginWindow < time.Minute || cfg.LoginWindow > 24*time.Hour {
+		return Config{}, errors.New("SIMPLE_SCP_LOGIN_WINDOW must be between 1m and 24h")
 	}
 
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
