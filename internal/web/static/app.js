@@ -305,6 +305,29 @@ function wirePanes() {
       $(".upload-input", el).click();
     });
     $(".upload-input", el).addEventListener("change", function (e) { uploadFiles(side, Array.from(e.target.files)); });
+
+    ["dragenter", "dragover"].forEach(function (eventName) {
+      el.addEventListener(eventName, function (e) {
+        e.preventDefault();
+        if (!state.panes[side].connectionId) return;
+        el.classList.add("drag-active");
+      });
+    });
+    ["dragleave", "drop"].forEach(function (eventName) {
+      el.addEventListener(eventName, function (e) {
+        e.preventDefault();
+        el.classList.remove("drag-active");
+      });
+    });
+    el.addEventListener("drop", function (e) {
+      if (!state.panes[side].connectionId) {
+        toast("Choose a server before dropping files.", "error");
+        return;
+      }
+      const files = Array.from(e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files : []);
+      if (files.length) uploadFiles(side, files);
+    });
+
     $(".mkdir-btn", el).addEventListener("click", function () { createFolder(side); });
     $(".rename-btn", el).addEventListener("click", function () { renameSelected(side); });
     $(".download-btn", el).addEventListener("click", function () { downloadSelected(side); });
