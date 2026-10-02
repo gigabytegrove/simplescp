@@ -9,7 +9,8 @@ const state = {
   },
   pendingTrust: null,
   activePane: "left",
-  activity: []
+  activity: [],
+  actionResolver: null
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -184,6 +185,52 @@ function updateActivity(id, status, detail) {
   item.status = status;
   if (detail) item.detail = detail;
   renderActivity();
+}
+
+function showActionDialog(options) {
+  const dialog = $("#actionDialog");
+  const form = $("#actionForm");
+  const inputWrap = $("#actionInputWrap");
+  const input = $("#actionInput");
+  const warning = $("#actionWarning");
+  const confirmButton = $("#actionConfirm");
+
+  $("#actionEyebrow").textContent = options.eyebrow || "FILE ACTION";
+  $("#actionTitle").textContent = options.title || "Confirm action";
+  $("#actionDescription").textContent = options.description || "";
+  $("#actionInputHint").textContent = options.hint || "";
+  confirmButton.textContent = options.confirmLabel || "Continue";
+  confirmButton.classList.toggle("danger", Boolean(options.danger));
+  confirmButton.classList.toggle("primary", !options.danger);
+
+  inputWrap.classList.toggle("hidden", !options.input);
+  warning.classList.toggle("hidden", !options.warning);
+  warning.textContent = options.warning || "";
+
+  input.value = options.value || "";
+  input.placeholder = options.placeholder || "";
+
+  dialog.showModal();
+  if (options.input) {
+    requestAnimationFrame(function () {
+      input.focus();
+      input.select();
+    });
+  } else {
+    requestAnimationFrame(function () { confirmButton.focus(); });
+  }
+
+  return new Promise(function (resolve) {
+    state.actionResolver = resolve;
+  });
+}
+
+function resolveActionDialog(value) {
+  if (state.actionResolver) {
+    state.actionResolver(value);
+    state.actionResolver = null;
+  }
+  $("#actionDialog").close();
 }
 
 function renderActivity() {
@@ -503,7 +550,15 @@ async function uploadFiles(side, files) {
 async function createFolder(side) {
   const pane = state.panes[side];
   if (!pane.connectionId) return toast("Choose a server first.", "error");
-  const name = prompt("New folder name:");
+  const name = await showActionDialog({
+    eyebrow: "NEW FOLDER",
+    title: "Create a folder",
+    description: "Create a new folder in " + pane.path + ".",
+    input: true,
+    placeholder: "Folder name",
+    hint: "Folder names cannot contain /.",
+    confirmLabel: "Create folder"
+  });
   if (!name) return;
   const cleanName = name.trim().replaceAll("/", "");
   if (!cleanName || cleanName === "." || cleanName === "..") return toast("Invalid folder name.", "error");
@@ -526,7 +581,15 @@ async function renameSelected(side) {
   const pane = state.panes[side];
   const selected = pane.selected[0];
   if (!selected) return;
-  const nextName = prompt("Rename to:", selected.name);
+  const nextName = await showActionDialog({
+    eyebrow: "RENAME",
+    title: "Rename item",
+    description: "Choose a new name for " + selected.name + ".",
+    input: true,
+    value: selected.name,
+    hint: "Names cannot contain /.",
+    confirmLabel: "Rename"
+  });
   if (!nextName || nextName === selected.name) return;
   const cleanName = nextName.trim().replaceAll("/", "");
   if (!cleanName || cleanName === "." || cleanName === "..") return toast("Invalid name.", "error");
@@ -557,8 +620,16 @@ async function deleteSelected(side) {
   const pane = state.panes[side];
   const selected = pane.selected.slice();
   if (!selected.length) return;
-  const label = selected.length === 1 ? '"' + selected[0].name + '"' : selected.length + " selected items";
-  if (!confirm("Delete " + label + "? Folders will be removed recursively.")) return;
+  const label = selected.length === 1 ? selected[0].name : selected.length + " selected items";
+  const confirmed = await showActionDialog({
+    eyebrow: "DESTRUCTIVE ACTION",
+    title: selected.length === 1 ? "Delete " + label + "?" : "Delete selected items?",
+    description: selected.length === 1 ? "This item will be permanently removed from the remote server." : selected.length + " selected items will be permanently removed from the remote server.",
+    warning: selected.some(function (item) { return item.isDir; }) ? "Selected folders will be deleted recursively, including everything inside them." : "This action cannot be undone.",
+    confirmLabel: "Delete",
+    danger: true
+  });
+  if (!confirmed) return;
   const activityId = addActivity("delete", "Delete", selected.length + " item" + (selected.length === 1 ? "" : "s") + " from " + pane.path, "busy");
   try {
     setStatus("Deleting " + selected.length + " item" + (selected.length === 1 ? "" : "s") + "…", "busy");
@@ -679,7 +750,16 @@ async function saveConnection(event) {
 async function deleteConnection() {
   const id = Number($("#connectionForm").elements.id.value || 0);
   const c = connectionById(id);
-  if (!id || !c || !confirm('Delete saved connection "' + c.name + '"?')) return;
+  if (!id || !c) return;
+  const confirmed = await showActionDialog({
+    eyebrow: "REMOVE SERVER",
+    title: "Delete " + c.name + "?",
+    description: "This removes the saved connection profile from SimpleSCP. It does not modify the remote server.",
+    warning: "Any saved encrypted credentials for this connection will also be removed.",
+    confirmLabel: "Delete connection",
+    danger: true
+  });
+  if (!confirmed) return;
 
   try {
     await api("/api/connections/" + id, { method: "DELETE" });
@@ -736,6 +816,21 @@ async function logout() {
 
 function wirePremiumControls() {
   setActivePane("left");
+
+  $("#actionForm")?.addEventListener("submit", function (event) {
+    event.preventDefault();
+    const inputVisible = !$("#actionInputWrap").classList.contains("hidden");
+    resolveActionDialog(inputVisible ? $("#actionInput").value.trim() : true);
+  });
+
+  $(".action-cancel").forEach(function (button) {
+    button.addEventListener("click", function () { resolveActionDialog(null); });
+  });
+
+  $("#actionDialog")?.addEventListener("cancel", function (event) {
+    event.preventDefault();
+    resolveActionDialog(null);
+  });
 
   $("#activityToggle")?.addEventListener("click", function () {
     const drawer = $("#activityDrawer");
