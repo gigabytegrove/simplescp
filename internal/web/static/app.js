@@ -4,8 +4,8 @@ const csrf = document.querySelector('meta[name="csrf-token"]')?.content || "";
 const state = {
   connections: [],
   panes: {
-    left: { connectionId: 0, path: "/", selected: null },
-    right: { connectionId: 0, path: "/", selected: null }
+    left: { connectionId: 0, path: "/", selected: [] },
+    right: { connectionId: 0, path: "/", selected: [] }
   },
   pendingTrust: null
 };
@@ -187,7 +187,7 @@ async function loadPane(side) {
   const el = paneElement(side);
   const tbody = $(".file-list", el);
   $(".path-input", el).value = pane.path;
-  pane.selected = null;
+  pane.selected = [];
   updatePaneSelection(side);
 
   if (!pane.connectionId) {
@@ -237,7 +237,7 @@ function renderEntries(side, entries) {
   }).join("");
 
   $$(".entry-row", tbody).forEach(function (row) {
-    row.addEventListener("click", function () { selectEntry(side, row); });
+    row.addEventListener("click", function (event) { selectEntry(side, row, event.ctrlKey || event.metaKey); });
     row.addEventListener("dblclick", function () {
       if (row.dataset.dir === "1") {
         state.panes[side].path = row.dataset.path;
@@ -247,16 +247,28 @@ function renderEntries(side, entries) {
   });
 }
 
-function selectEntry(side, row) {
-  const el = paneElement(side);
-  $$(".entry-row", el).forEach(function (r) { r.classList.remove("selected"); });
-  row.classList.add("selected");
-  state.panes[side].selected = {
+function selectEntry(side, row, additive) {
+  const pane = state.panes[side];
+  const item = {
     path: row.dataset.path,
     name: row.dataset.name,
     isDir: row.dataset.dir === "1",
     size: Number(row.dataset.size || 0)
   };
+  const existing = pane.selected.findIndex(function (entry) { return entry.path === item.path; });
+
+  if (!additive) {
+    pane.selected = [item];
+  } else if (existing >= 0) {
+    pane.selected.splice(existing, 1);
+  } else {
+    pane.selected.push(item);
+  }
+
+  const selectedPaths = new Set(pane.selected.map(function (entry) { return entry.path; }));
+  $(".entry-row", paneElement(side)).forEach(function (r) {
+    r.classList.toggle("selected", selectedPaths.has(r.dataset.path));
+  });
   updatePaneSelection(side);
 }
 
@@ -264,12 +276,21 @@ function updatePaneSelection(side) {
   const pane = state.panes[side];
   const el = paneElement(side);
   const selected = pane.selected;
-  $(".selection-text", el).textContent = selected ? selected.name + (selected.isDir ? " · folder" : " · " + bytes(selected.size)) : "Nothing selected";
-  $(".download-btn", el).disabled = !selected || selected.isDir;
-  $(".delete-btn", el).disabled = !selected;
-  $(".rename-btn", el).disabled = !selected;
+  const count = selected.length;
+  if (!count) {
+    $(".selection-text", el).textContent = "Nothing selected";
+  } else if (count === 1) {
+    const item = selected[0];
+    $(".selection-text", el).textContent = item.name + (item.isDir ? " · folder" : " · " + bytes(item.size));
+  } else {
+    $(".selection-text", el).textContent = count + " items selected";
+  }
+
+  $(".download-btn", el).disabled = count !== 1 || selected[0].isDir;
+  $(".delete-btn", el).disabled = count === 0;
+  $(".rename-btn", el).disabled = count !== 1;
   const other = state.panes[side === "left" ? "right" : "left"];
-  $(".copy-to-other", el).disabled = !selected || selected.isDir || !other.connectionId;
+  $(".copy-to-other", el).disabled = count === 0 || selected.some(function (item) { return item.isDir; }) || !other.connectionId;
 }
 
 function wirePanes() {
@@ -280,7 +301,7 @@ function wirePanes() {
       const id = Number(e.target.value);
       if (id) connectPane(side, id);
       else {
-        state.panes[side] = { connectionId: 0, path: "/", selected: null };
+        state.panes[side] = { connectionId: 0, path: "/", selected: [] };
         loadPane(side);
       }
     });
@@ -379,7 +400,7 @@ async function createFolder(side) {
 
 async function renameSelected(side) {
   const pane = state.panes[side];
-  const selected = pane.selected;
+  const selected = pane.selected[0];
   if (!selected) return;
   const nextName = prompt("Rename to:", selected.name);
   if (!nextName || nextName === selected.name) return;
@@ -402,24 +423,29 @@ async function renameSelected(side) {
 
 function downloadSelected(side) {
   const pane = state.panes[side];
-  if (!pane.selected || pane.selected.isDir) return;
-  location.href = "/api/connections/" + pane.connectionId + "/download?path=" + encodeURIComponent(pane.selected.path);
+  if (pane.selected.length !== 1 || pane.selected[0].isDir) return;
+  location.href = "/api/connections/" + pane.connectionId + "/download?path=" + encodeURIComponent(pane.selected[0].path);
 }
 
 async function deleteSelected(side) {
   const pane = state.panes[side];
-  const selected = pane.selected;
-  if (!selected) return;
-  const suffix = selected.isDir ? " and everything inside it" : "";
-  if (!confirm('Delete ' + (selected.isDir ? "folder" : "file") + ' "' + selected.name + '"' + suffix + "?")) return;
+  const selected = pane.selected.slice();
+  if (!selected.length) return;
+  const label = selected.length === 1 ? '"' + selected[0].name + '"' : selected.length + " selected items";
+  if (!confirm("Delete " + label + "? Folders will be removed recursively.")) return;
   try {
-    await api("/api/connections/" + pane.connectionId + "/delete", {
-      method: "POST",
-      body: { path: selected.path, recursive: selected.isDir }
-    });
-    toast("Deleted.", "success");
+    setStatus("Deleting " + selected.length + " item" + (selected.length === 1 ? "" : "s") + "…", "busy");
+    for (const item of selected) {
+      await api("/api/connections/" + pane.connectionId + "/delete", {
+        method: "POST",
+        body: { path: item.path, recursive: item.isDir }
+      });
+    }
+    toast("Deleted " + selected.length + " item" + (selected.length === 1 ? "" : "s") + ".", "success");
+    setStatus("Delete complete", "success");
     await loadPane(side);
   } catch (err) {
+    setStatus("Delete failed", "error");
     toast(err.message, "error");
   }
 }
@@ -428,21 +454,23 @@ async function copySelected(side) {
   const source = state.panes[side];
   const destinationSide = side === "left" ? "right" : "left";
   const destination = state.panes[destinationSide];
-  if (!source.selected || source.selected.isDir || !destination.connectionId) return;
-  const destinationPath = normalizePath(destination.path + "/" + source.selected.name);
-  setStatus("Copying " + source.selected.name + "…", "busy");
+  const selected = source.selected.slice();
+  if (!selected.length || selected.some(function (item) { return item.isDir; }) || !destination.connectionId) return;
+  setStatus("Copying " + selected.length + " file" + (selected.length === 1 ? "" : "s") + "…", "busy");
 
   try {
-    await api("/api/transfer", {
-      method: "POST",
-      body: {
-        source_connection_id: source.connectionId,
-        source_path: source.selected.path,
-        destination_connection_id: destination.connectionId,
-        destination_path: destinationPath
-      }
-    });
-    toast("Copied " + source.selected.name + ".", "success");
+    for (const item of selected) {
+      await api("/api/transfer", {
+        method: "POST",
+        body: {
+          source_connection_id: source.connectionId,
+          source_path: item.path,
+          destination_connection_id: destination.connectionId,
+          destination_path: normalizePath(destination.path + "/" + item.name)
+        }
+      });
+    }
+    toast("Copied " + selected.length + " file" + (selected.length === 1 ? "" : "s") + ".", "success");
     setStatus("Transfer complete", "success");
     await loadPane(destinationSide);
   } catch (err) {
@@ -523,7 +551,7 @@ async function deleteConnection() {
     await api("/api/connections/" + id, { method: "DELETE" });
     $("#connectionDialog").close();
     ["left", "right"].forEach(function (side) {
-      if (state.panes[side].connectionId === id) state.panes[side] = { connectionId: 0, path: "/", selected: null };
+      if (state.panes[side].connectionId === id) state.panes[side] = { connectionId: 0, path: "/", selected: [] };
     });
     await loadConnections();
     await Promise.all([loadPane("left"), loadPane("right")]);
