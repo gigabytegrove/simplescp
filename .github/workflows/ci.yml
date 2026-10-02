@@ -25,6 +25,10 @@ jobs:
         run: go test ./...
       - name: Vet
         run: go vet ./...
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+      - name: Vulnerability scan
+        run: govulncheck ./...
       - name: Build
         run: go build ./cmd/simplescp
       - name: Build container
