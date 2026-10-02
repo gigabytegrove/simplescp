@@ -1,0 +1,352 @@
+package web
+
+import (
+	"context"
+	"embed"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"html/template"
+	"io"
+	"log/slog"
+	"mime"
+	"net/http"
+	"net/url"
+	"path"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/gigabytegrove/simplescp/internal/config"
+	"github.com/gigabytegrove/simplescp/internal/sshclient"
+	"github.com/gigabytegrove/simplescp/internal/store"
+)
+
+//go:embed templates/*.html static/*
+var assets embed.FS
+
+type app struct {
+	cfg       config.Config
+	store     *store.Store
+	logger    *slog.Logger
+	templates *template.Template
+	mux       *http.ServeMux
+}
+
+type ctxKey string
+const sessionKey ctxKey = "session"
+
+func New(cfg config.Config, db *store.Store, logger *slog.Logger) (http.Handler, error) {
+	t, err := template.ParseFS(assets, "templates/*.html")
+	if err != nil { return nil, fmt.Errorf("parse templates: %w", err) }
+	a := &app{cfg:cfg,store:db,logger:logger,templates:t,mux:http.NewServeMux()}
+	a.routes()
+	return a.securityHeaders(a.sessionMiddleware(a.mux)), nil
+}
+
+func (a *app) routes() {
+	staticFS := http.FileServer(http.FS(assets))
+	a.mux.Handle("GET /static/", staticFS)
+	a.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK); _,_ = w.Write([]byte("ok")) })
+	a.mux.HandleFunc("GET /login", a.loginPage)
+	a.mux.HandleFunc("POST /login", a.login)
+	a.mux.HandleFunc("POST /logout", a.requireAuth(a.requireCSRF(a.logout)))
+	a.mux.HandleFunc("GET /", a.requireAuth(a.dashboard))
+
+	a.mux.HandleFunc("GET /api/connections", a.requireAuth(a.listConnections))
+	a.mux.HandleFunc("POST /api/connections", a.requireAuth(a.requireCSRF(a.createConnection)))
+	a.mux.HandleFunc("PUT /api/connections/{id}", a.requireAuth(a.requireCSRF(a.updateConnection)))
+	a.mux.HandleFunc("DELETE /api/connections/{id}", a.requireAuth(a.requireCSRF(a.deleteConnection)))
+	a.mux.HandleFunc("POST /api/connections/{id}/trust", a.requireAuth(a.requireCSRF(a.trustConnection)))
+	a.mux.HandleFunc("GET /api/connections/{id}/list", a.requireAuth(a.listRemote))
+	a.mux.HandleFunc("POST /api/connections/{id}/mkdir", a.requireAuth(a.requireCSRF(a.mkdirRemote)))
+	a.mux.HandleFunc("POST /api/connections/{id}/rename", a.requireAuth(a.requireCSRF(a.renameRemote)))
+	a.mux.HandleFunc("POST /api/connections/{id}/delete", a.requireAuth(a.requireCSRF(a.deleteRemote)))
+	a.mux.HandleFunc("POST /api/connections/{id}/upload", a.requireAuth(a.requireCSRF(a.uploadRemote)))
+	a.mux.HandleFunc("GET /api/connections/{id}/download", a.requireAuth(a.downloadRemote))
+	a.mux.HandleFunc("POST /api/transfer", a.requireAuth(a.requireCSRF(a.transferRemote)))
+}
+
+func (a *app) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Referrer-Policy", "same-origin")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'")
+		next.ServeHTTP(w,r)
+	})
+}
+
+func (a *app) sessionMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c, err := r.Cookie("simplescp_session")
+		if err == nil && c.Value != "" {
+			if sess, err := a.store.GetSession(c.Value); err == nil {
+				r = r.WithContext(context.WithValue(r.Context(), sessionKey, sess))
+			}
+		}
+		next.ServeHTTP(w,r)
+	})
+}
+
+func sessionFrom(r *http.Request) (store.Session, bool) {
+	s, ok := r.Context().Value(sessionKey).(store.Session)
+	return s, ok
+}
+
+func (a *app) requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := sessionFrom(r); !ok {
+			if strings.HasPrefix(r.URL.Path, "/api/") {
+				writeError(w,http.StatusUnauthorized,"authentication required")
+				return
+			}
+			http.Redirect(w,r,"/login",http.StatusSeeOther)
+			return
+		}
+		next(w,r)
+	}
+}
+
+func (a *app) requireCSRF(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sess, ok := sessionFrom(r)
+		if !ok || r.Header.Get("X-CSRF-Token") == "" || r.Header.Get("X-CSRF-Token") != sess.CSRFToken {
+			writeError(w,http.StatusForbidden,"invalid CSRF token")
+			return
+		}
+		next(w,r)
+	}
+}
+
+func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
+	if _, ok := sessionFrom(r); ok {
+		http.Redirect(w,r,"/",http.StatusSeeOther); return
+	}
+	w.Header().Set("Content-Type","text/html; charset=utf-8")
+	_ = a.templates.ExecuteTemplate(w,"login.html",nil)
+}
+
+func (a *app) login(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil { http.Error(w,"Bad request",http.StatusBadRequest); return }
+	u, err := a.store.Authenticate(r.FormValue("username"),r.FormValue("password"))
+	if err != nil {
+		time.Sleep(350*time.Millisecond)
+		w.Header().Set("Content-Type","text/html; charset=utf-8")
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = a.templates.ExecuteTemplate(w,"login.html",map[string]any{"Error":"Invalid username or password."})
+		return
+	}
+	token, _, expires, err := a.store.CreateSession(u.ID,a.cfg.SessionTTL)
+	if err != nil { http.Error(w,"Unable to create session",http.StatusInternalServerError); return }
+	http.SetCookie(w,&http.Cookie{
+		Name:"simplescp_session",Value:token,Path:"/",Expires:expires,HttpOnly:true,
+		Secure:a.cfg.CookieSecure,SameSite:http.SameSiteStrictMode,
+	})
+	http.Redirect(w,r,"/",http.StatusSeeOther)
+}
+
+func (a *app) logout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie("simplescp_session"); err == nil { _ = a.store.DeleteSession(c.Value) }
+	http.SetCookie(w,&http.Cookie{Name:"simplescp_session",Value:"",Path:"/",MaxAge:-1,HttpOnly:true,Secure:a.cfg.CookieSecure,SameSite:http.SameSiteStrictMode})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *app) dashboard(w http.ResponseWriter, r *http.Request) {
+	sess,_ := sessionFrom(r)
+	w.Header().Set("Content-Type","text/html; charset=utf-8")
+	if err := a.templates.ExecuteTemplate(w,"dashboard.html",map[string]any{"Username":sess.Username,"CSRF":sess.CSRFToken}); err != nil {
+		a.logger.Error("render dashboard","error",err)
+	}
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type","application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
+}
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w,status,map[string]any{"error":message})
+}
+func decodeJSON(r *http.Request, dst any) error {
+	dec:=json.NewDecoder(io.LimitReader(r.Body,1<<20))
+	dec.DisallowUnknownFields()
+	return dec.Decode(dst)
+}
+func parseID(r *http.Request) (int64,error) {
+	return strconv.ParseInt(r.PathValue("id"),10,64)
+}
+func userID(r *http.Request) int64 { s,_:=sessionFrom(r); return s.UserID }
+
+type connectionInput struct {
+	Name string `json:"name"`
+	Host string `json:"host"`
+	Port int `json:"port"`
+	Username string `json:"username"`
+	AuthType string `json:"auth_type"`
+	Password string `json:"password"`
+	PrivateKey string `json:"private_key"`
+	Passphrase string `json:"passphrase"`
+	DefaultPath string `json:"default_path"`
+}
+
+func toConnection(in connectionInput, uid int64) store.Connection {
+	port:=in.Port; if port==0 { port=22 }
+	return store.Connection{UserID:uid,Name:in.Name,Host:in.Host,Port:port,Username:in.Username,AuthType:in.AuthType,Password:in.Password,PrivateKey:in.PrivateKey,Passphrase:in.Passphrase,DefaultPath:in.DefaultPath}
+}
+
+func publicConnection(c store.Connection) store.Connection {
+	c.Password=""; c.PrivateKey=""; c.Passphrase=""
+	return c
+}
+
+func (a *app) listConnections(w http.ResponseWriter,r *http.Request) {
+	items,err:=a.store.ListConnections(userID(r))
+	if err!=nil { writeError(w,500,"unable to load connections"); return }
+	writeJSON(w,200,map[string]any{"connections":items})
+}
+
+func (a *app) createConnection(w http.ResponseWriter,r *http.Request) {
+	var in connectionInput
+	if err:=decodeJSON(r,&in); err!=nil { writeError(w,400,"invalid connection payload"); return }
+	c:=toConnection(in,userID(r))
+	saved,err:=a.store.SaveConnection(c)
+	if err!=nil { writeError(w,400,err.Error()); return }
+	writeJSON(w,201,publicConnection(saved))
+}
+
+func (a *app) updateConnection(w http.ResponseWriter,r *http.Request) {
+	id,err:=parseID(r); if err!=nil { writeError(w,400,"invalid connection id"); return }
+	var in connectionInput
+	if err:=decodeJSON(r,&in); err!=nil { writeError(w,400,"invalid connection payload"); return }
+	c:=toConnection(in,userID(r)); c.ID=id
+	current,err:=a.store.GetConnection(userID(r),id)
+	if err!=nil { writeError(w,404,"connection not found"); return }
+	if current.Host != strings.TrimSpace(c.Host) || current.Port != c.Port {
+		c.HostKeyFingerprint=""
+	} else {
+		c.HostKeyFingerprint=current.HostKeyFingerprint
+	}
+	saved,err:=a.store.SaveConnection(c)
+	if err!=nil { writeError(w,400,err.Error()); return }
+	writeJSON(w,200,publicConnection(saved))
+}
+
+func (a *app) deleteConnection(w http.ResponseWriter,r *http.Request) {
+	id,err:=parseID(r); if err!=nil { writeError(w,400,"invalid connection id"); return }
+	if err:=a.store.DeleteConnection(userID(r),id); err!=nil { writeError(w,404,"connection not found"); return }
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *app) trustConnection(w http.ResponseWriter,r *http.Request) {
+	id,err:=parseID(r); if err!=nil { writeError(w,400,"invalid connection id"); return }
+	c,err:=a.store.GetConnection(userID(r),id)
+	if err!=nil { writeError(w,404,"connection not found"); return }
+	fp,err:=sshclient.ProbeFingerprint(c,a.cfg.SSHTimeout)
+	if err!=nil { writeError(w,502,err.Error()); return }
+	if err:=a.store.SetHostFingerprint(userID(r),id,fp); err!=nil { writeError(w,500,"unable to save host key"); return }
+	writeJSON(w,200,map[string]any{"fingerprint":fp})
+}
+
+func (a *app) dialConnection(r *http.Request,id int64) (*sshclient.Client,error) {
+	c,err:=a.store.GetConnection(userID(r),id)
+	if err!=nil { return nil,errors.New("connection not found") }
+	return sshclient.Dial(c,a.cfg.SSHTimeout)
+}
+
+func sshError(w http.ResponseWriter,err error) {
+	var hk *sshclient.HostKeyError
+	if errors.As(err,&hk) {
+		writeJSON(w,http.StatusPreconditionRequired,map[string]any{"error":"host key not trusted","fingerprint":hk.Fingerprint})
+		return
+	}
+	writeError(w,http.StatusBadGateway,err.Error())
+}
+
+func (a *app) listRemote(w http.ResponseWriter,r *http.Request) {
+	id,err:=parseID(r); if err!=nil { writeError(w,400,"invalid connection id"); return }
+	client,err:=a.dialConnection(r,id); if err!=nil { sshError(w,err); return }
+	defer client.Close()
+	p:=r.URL.Query().Get("path")
+	items,err:=client.List(p); if err!=nil { sshError(w,err); return }
+	writeJSON(w,200,map[string]any{"path":sshclient.CleanRemote(p),"entries":items})
+}
+
+type pathRequest struct { Path string `json:"path"` }
+func (a *app) mkdirRemote(w http.ResponseWriter,r *http.Request) {
+	id,err:=parseID(r); if err!=nil { writeError(w,400,"invalid connection id"); return }
+	var in pathRequest; if decodeJSON(r,&in)!=nil || strings.TrimSpace(in.Path)=="" { writeError(w,400,"path is required"); return }
+	client,err:=a.dialConnection(r,id); if err!=nil { sshError(w,err); return }; defer client.Close()
+	if err:=client.Mkdir(in.Path); err!=nil { sshError(w,err); return }
+	w.WriteHeader(http.StatusNoContent)
+}
+type renameRequest struct { OldPath string `json:"old_path"`; NewPath string `json:"new_path"` }
+func (a *app) renameRemote(w http.ResponseWriter,r *http.Request) {
+	id,err:=parseID(r); if err!=nil { writeError(w,400,"invalid connection id"); return }
+	var in renameRequest; if decodeJSON(r,&in)!=nil || in.OldPath=="" || in.NewPath=="" { writeError(w,400,"old_path and new_path are required"); return }
+	client,err:=a.dialConnection(r,id); if err!=nil { sshError(w,err); return }; defer client.Close()
+	if err:=client.Rename(in.OldPath,in.NewPath); err!=nil { sshError(w,err); return }
+	w.WriteHeader(http.StatusNoContent)
+}
+type deleteRequest struct { Path string `json:"path"`; Recursive bool `json:"recursive"` }
+func (a *app) deleteRemote(w http.ResponseWriter,r *http.Request) {
+	id,err:=parseID(r); if err!=nil { writeError(w,400,"invalid connection id"); return }
+	var in deleteRequest; if decodeJSON(r,&in)!=nil || in.Path=="" { writeError(w,400,"path is required"); return }
+	client,err:=a.dialConnection(r,id); if err!=nil { sshError(w,err); return }; defer client.Close()
+	if err:=client.Remove(in.Path,in.Recursive); err!=nil { sshError(w,err); return }
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (a *app) uploadRemote(w http.ResponseWriter,r *http.Request) {
+	id,err:=parseID(r); if err!=nil { writeError(w,400,"invalid connection id"); return }
+	target:=sshclient.CleanRemote(r.URL.Query().Get("path"))
+	client,err:=a.dialConnection(r,id); if err!=nil { sshError(w,err); return }; defer client.Close()
+	mr,err:=r.MultipartReader(); if err!=nil { writeError(w,400,"multipart upload required"); return }
+	var uploaded []map[string]any
+	for {
+		part,err:=mr.NextPart()
+		if errors.Is(err,io.EOF) { break }
+		if err!=nil { writeError(w,400,"invalid multipart upload"); return }
+		if part.FileName()=="" { part.Close(); continue }
+		name:=path.Base(strings.ReplaceAll(part.FileName(),"\\","/"))
+		if name=="." || name=="/" || name=="" { part.Close(); continue }
+		dst,err:=client.Create(path.Join(target,name))
+		if err!=nil { part.Close(); sshError(w,err); return }
+		n,copyErr:=io.Copy(dst,part)
+		closeErr:=dst.Close(); part.Close()
+		if copyErr!=nil { sshError(w,copyErr); return }
+		if closeErr!=nil { sshError(w,closeErr); return }
+		uploaded=append(uploaded,map[string]any{"name":name,"bytes":n})
+	}
+	writeJSON(w,201,map[string]any{"uploaded":uploaded})
+}
+
+func (a *app) downloadRemote(w http.ResponseWriter,r *http.Request) {
+	id,err:=parseID(r); if err!=nil { writeError(w,400,"invalid connection id"); return }
+	remotePath:=r.URL.Query().Get("path"); if remotePath=="" { writeError(w,400,"path is required"); return }
+	client,err:=a.dialConnection(r,id); if err!=nil { sshError(w,err); return }; defer client.Close()
+	f,info,err:=client.Open(remotePath); if err!=nil { sshError(w,err); return }; defer f.Close()
+	filename:=path.Base(remotePath)
+	w.Header().Set("Content-Disposition",fmt.Sprintf("attachment; filename*=UTF-8''%s",url.PathEscape(filename)))
+	if ct:=mime.TypeByExtension(path.Ext(filename)); ct!="" { w.Header().Set("Content-Type",ct) } else { w.Header().Set("Content-Type","application/octet-stream") }
+	w.Header().Set("Content-Length",strconv.FormatInt(info.Size(),10))
+	_,_ = io.Copy(w,f)
+}
+
+type transferRequest struct {
+	SourceConnectionID int64 `json:"source_connection_id"`
+	SourcePath string `json:"source_path"`
+	DestinationConnectionID int64 `json:"destination_connection_id"`
+	DestinationPath string `json:"destination_path"`
+}
+func (a *app) transferRemote(w http.ResponseWriter,r *http.Request) {
+	var in transferRequest
+	if decodeJSON(r,&in)!=nil || in.SourceConnectionID<=0 || in.DestinationConnectionID<=0 || in.SourcePath=="" || in.DestinationPath=="" {
+		writeError(w,400,"source and destination connection/path are required"); return
+	}
+	src,err:=a.dialConnection(r,in.SourceConnectionID); if err!=nil { sshError(w,err); return }; defer src.Close()
+	dst,err:=a.dialConnection(r,in.DestinationConnectionID); if err!=nil { sshError(w,err); return }; defer dst.Close()
+	n,err:=sshclient.CopyFile(src,in.SourcePath,dst,in.DestinationPath); if err!=nil { sshError(w,err); return }
+	writeJSON(w,200,map[string]any{"bytes":n})
+}
