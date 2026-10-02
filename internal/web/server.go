@@ -16,6 +16,7 @@ import (
 	"log/slog"
 	"mime"
 	"net"
+	"os"
 	"net/http"
 	"net/url"
 	"path"
@@ -23,8 +24,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gigabytegrove/simplescp/internal/buildinfo"
 	"github.com/gigabytegrove/simplescp/internal/config"
 	"github.com/gigabytegrove/simplescp/internal/sshclient"
+	"github.com/gigabytegrove/simplescp/internal/updater"
 	"github.com/gigabytegrove/simplescp/internal/store"
 )
 
@@ -39,6 +42,7 @@ type app struct {
 	mux          *http.ServeMux
 	loginLimiter *loginLimiter
 	transferSem  chan struct{}
+	updater      *updater.Manager
 }
 
 type ctxKey string
@@ -55,6 +59,7 @@ func New(cfg config.Config, db *store.Store, logger *slog.Logger) (http.Handler,
 		mux:http.NewServeMux(),
 		loginLimiter:newLoginLimiter(cfg.LoginMaxAttempts, cfg.LoginWindow),
 		transferSem:make(chan struct{}, cfg.MaxConcurrentTransfers),
+		updater:updater.New(cfg.DataDir),
 	}
 	a.routes()
 	return a.securityHeaders(a.sameOrigin(a.sessionMiddleware(a.mux))), nil
@@ -81,6 +86,9 @@ func (a *app) routes() {
 	a.mux.HandleFunc("POST /api/connections/{id}/upload", a.requireAuth(a.requireCSRF(a.uploadRemote)))
 	a.mux.HandleFunc("GET /api/connections/{id}/download", a.requireAuth(a.downloadRemote))
 	a.mux.HandleFunc("POST /api/transfer", a.requireAuth(a.requireCSRF(a.transferRemote)))
+	a.mux.HandleFunc("GET /api/update", a.requireAuth(a.requireAdmin(a.updateStatus)))
+	a.mux.HandleFunc("POST /api/update/install", a.requireAuth(a.requireAdmin(a.requireCSRF(a.installUpdate))))
+	a.mux.HandleFunc("POST /api/update/rollback", a.requireAuth(a.requireAdmin(a.requireCSRF(a.rollbackUpdate))))
 }
 
 func (a *app) securityHeaders(next http.Handler) http.Handler {
@@ -244,6 +252,17 @@ func (a *app) requireCSRF(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+func (a *app) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		sess, ok := sessionFrom(r)
+		if !ok || !sess.IsAdmin {
+			writeError(w, http.StatusForbidden, "administrator access required")
+			return
+		}
+		next(w, r)
+	}
+}
+
 func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
 	if _, ok := sessionFrom(r); ok {
 		http.Redirect(w,r,"/",http.StatusSeeOther)
@@ -323,7 +342,7 @@ func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 func (a *app) dashboard(w http.ResponseWriter, r *http.Request) {
 	sess,_ := sessionFrom(r)
 	w.Header().Set("Content-Type","text/html; charset=utf-8")
-	if err := a.templates.ExecuteTemplate(w,"dashboard.html",map[string]any{"Username":sess.Username,"CSRF":sess.CSRFToken}); err != nil {
+	if err := a.templates.ExecuteTemplate(w,"dashboard.html",map[string]any{"Username":sess.Username,"CSRF":sess.CSRFToken,"IsAdmin":sess.IsAdmin,"Version":buildinfo.Version}); err != nil {
 		a.logger.Error("render dashboard","error",err)
 	}
 }
@@ -555,4 +574,45 @@ func (a *app) transferRemote(w http.ResponseWriter,r *http.Request) {
 	dst,err:=a.dialConnection(r,in.DestinationConnectionID); if err!=nil { sshError(w,err); return }; defer dst.Close()
 	n,err:=sshclient.CopyFile(src,in.SourcePath,dst,in.DestinationPath); if err!=nil { sshError(w,err); return }
 	writeJSON(w,200,map[string]any{"bytes":n})
+}
+
+func (a *app) updateStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := a.updater.Status(r.Context(), buildinfo.Version)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, status)
+}
+
+func restartAfterResponse() {
+	go func() {
+		time.Sleep(900 * time.Millisecond)
+		os.Exit(0)
+	}()
+}
+
+func (a *app) installUpdate(w http.ResponseWriter, r *http.Request) {
+	result, err := a.updater.Install(r.Context())
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "installed",
+		"version": result.Version,
+		"bytes": result.Bytes,
+		"sha256": result.SHA256,
+		"restart": true,
+	})
+	restartAfterResponse()
+}
+
+func (a *app) rollbackUpdate(w http.ResponseWriter, r *http.Request) {
+	if err := a.updater.Rollback(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status":"rollback-staged","restart":true})
+	restartAfterResponse()
 }
