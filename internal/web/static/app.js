@@ -11,7 +11,14 @@ const state = {
   activePane: "left",
   selectionAnchor: { left: null, right: null },
   activity: [],
-  actionResolver: null
+  actionResolver: null,
+  bridge: {
+    base: "http://127.0.0.1:9431",
+    token: localStorage.getItem("simplescp_local_bridge_token") || "",
+    roots: [],
+    info: null,
+    pendingSide: null
+  }
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -23,10 +30,139 @@ function makePaneState() {
     connectionId: 0,
     path: "/",
     selected: [],
+    bridgeRoot: "",
     localRoot: null,
     localRootName: "",
     localHandles: new Map()
   };
+}
+
+function bridgeSeparator(value) {
+  return String(value || "").includes("\\") ? "\\" : "/";
+}
+
+function bridgeJoin(base, name) {
+  const sep = bridgeSeparator(base);
+  return String(base || "").replace(/[\\/]+$/, "") + sep + String(name || "").replace(/^[\\/]+/, "");
+}
+
+function bridgeParentPath(value) {
+  const raw = String(value || "");
+  if (/^[A-Za-z]:[\\/]?$/.test(raw) || raw === "/") return raw;
+  const sep = bridgeSeparator(raw);
+  const trimmed = raw.replace(/[\\/]+$/, "");
+  const index = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
+  if (index < 0) return raw;
+  if (/^[A-Za-z]:$/.test(trimmed.slice(0, index))) return trimmed.slice(0, index) + sep;
+  return trimmed.slice(0, index) || sep;
+}
+
+async function bridgeFetch(path, options) {
+  const opts = Object.assign({ mode:"cors" }, options || {});
+  opts.headers = Object.assign({}, opts.headers || {});
+  if (state.bridge.token) opts.headers.Authorization = "Bearer " + state.bridge.token;
+  if (opts.body && !(opts.body instanceof Blob) && typeof opts.body !== "string") {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(opts.body);
+  }
+
+  let request;
+  try {
+    request = new Request(state.bridge.base + path, Object.assign({}, opts, { targetAddressSpace:"loopback" }));
+  } catch (_) {
+    request = new Request(state.bridge.base + path, opts);
+  }
+
+  const response = await fetch(request);
+  if (response.status === 204) return null;
+  const type = response.headers.get("content-type") || "";
+  const data = type.includes("application/json") ? await response.json() : await response.text();
+  if (!response.ok) {
+    const error = new Error(data && data.error ? data.error : (data || "Local Bridge request failed"));
+    error.status = response.status;
+    throw error;
+  }
+  return data;
+}
+
+async function detectLocalBridge() {
+  try {
+    const data = await bridgeFetch("/v1/info");
+    state.bridge.info = data;
+    const status = $("#localBridgeStatus");
+    if (status) status.textContent = "Local Bridge: detected · " + (data.os || "") + " " + (data.arch || "");
+    return true;
+  } catch (_) {
+    state.bridge.info = null;
+    const status = $("#localBridgeStatus");
+    if (status) status.textContent = "Local Bridge: not connected";
+    return false;
+  }
+}
+
+async function refreshBridgeRoots() {
+  if (!state.bridge.token) return false;
+  try {
+    const data = await bridgeFetch("/v1/roots");
+    state.bridge.roots = data.roots || [];
+    const status = $("#localBridgeStatus");
+    if (status) status.textContent = "Local Bridge: connected · " + state.bridge.roots.length + " location" + (state.bridge.roots.length === 1 ? "" : "s");
+    return true;
+  } catch (err) {
+    if (err.status === 401) {
+      state.bridge.token = "";
+      state.bridge.roots = [];
+      localStorage.removeItem("simplescp_local_bridge_token");
+    }
+    return false;
+  }
+}
+
+async function ensureBridge(side) {
+  state.bridge.pendingSide = side;
+  const detected = await detectLocalBridge();
+  if (!detected) {
+    $("#localBridgeDetected").textContent = "Local Bridge was not detected on 127.0.0.1:9431.";
+    $("#localBridgeMessage").textContent = "Download and run SimpleSCP Local Bridge on this computer, then try again.";
+    $("#localBridgeDialog").showModal();
+    return false;
+  }
+  if (await refreshBridgeRoots()) return true;
+  $("#localBridgeDetected").textContent = "Local Bridge detected. Pairing is required.";
+  $("#localBridgeMessage").textContent = "Enter the 8-character pairing code shown in the Local Bridge window.";
+  $("#localBridgeDialog").showModal();
+  $("#localBridgeCode").focus();
+  return false;
+}
+
+async function pairLocalBridge() {
+  const code = $("#localBridgeCode").value.trim().toUpperCase();
+  if (!code) return;
+  $("#pairLocalBridgeBtn").disabled = true;
+  try {
+    const result = await bridgeFetch("/v1/pair", { method:"POST", body:{ code:code }, headers:{} });
+    state.bridge.token = result.token;
+    localStorage.setItem("simplescp_local_bridge_token", result.token);
+    if (!await refreshBridgeRoots()) throw new Error("Pairing succeeded but drive enumeration failed.");
+    $("#localBridgeDialog").close();
+    const side = state.bridge.pendingSide;
+    state.bridge.pendingSide = null;
+    if (side) {
+      const pane = state.panes[side];
+      pane.mode = "bridge";
+      pane.connectionId = 0;
+      pane.localRoot = null;
+      pane.localHandles = new Map();
+      pane.path = state.bridge.roots[0]?.path || "";
+      pane.bridgeRoot = pane.path;
+      renderServerSelects();
+      await loadPane(side);
+    }
+  } catch (err) {
+    $("#localBridgeMessage").textContent = err.message;
+  } finally {
+    $("#pairLocalBridgeBtn").disabled = false;
+  }
 }
 
 function toast(message, type) {
@@ -128,8 +264,14 @@ function renderBreadcrumbs(side) {
   const host = $(".breadcrumbs", el);
   if (!host) return;
 
+  if (pane.mode === "bridge") {
+    const label = pane.path || "This PC";
+    host.innerHTML = '<button type="button" class="breadcrumb current">' + escapeHTML(label) + '</button>';
+    return;
+  }
+
   const parts = normalizePath(pane.path).split("/").filter(Boolean);
-  const crumbs = [{ label: pane.mode === "local" ? (pane.localRootName || "Local") : "/", path: "/" }];
+  const crumbs = [{ label: pane.mode === "browser" ? (pane.localRootName || "Local") : "/", path: "/" }];
   let current = "";
   parts.forEach(function (part) {
     current += "/" + part;
@@ -316,16 +458,22 @@ function renderServerSelects() {
   all(".file-pane").forEach(function (paneEl) {
     const side = paneEl.dataset.pane;
     const pane = state.panes[side];
-    const select = $(".server-select", paneEl);
-    let html = '<option value="">Choose an endpoint…</option>';
-    const localLabel = pane.mode === "local" && pane.localRootName
-      ? "Local computer · " + pane.localRootName
-      : "Local computer…";
-    html += '<option value="__local__"' + (pane.mode === "local" ? " selected" : "") + '>' + escapeHTML(localLabel) + '</option>';
+
+    const endpoint = $(".endpoint-type", paneEl);
+    endpoint.value = pane.mode === "browser" ? "browser" : pane.mode;
+
+    const server = $(".server-select", paneEl);
+    let serverHTML = '<option value="">Choose session…</option>';
     state.connections.forEach(function (c) {
-      html += '<option value="' + c.id + '"' + (pane.mode === "remote" && Number(pane.connectionId) === Number(c.id) ? " selected" : "") + '>' + escapeHTML(c.name) + '</option>';
+      serverHTML += '<option value="' + c.id + '"' + (pane.mode === "remote" && Number(pane.connectionId) === Number(c.id) ? " selected" : "") + '>' + escapeHTML(c.name) + '</option>';
     });
-    select.innerHTML = html;
+    server.innerHTML = serverHTML;
+
+    const drives = $(".local-drive-select", paneEl);
+    drives.innerHTML = '<option value="">This PC</option>' + state.bridge.roots.map(function (root) {
+      return '<option value="' + escapeHTML(root.path) + '"' + (pane.mode === "bridge" && pane.bridgeRoot === root.path ? " selected" : "") + '>' +
+        escapeHTML(root.name + (root.kind === "drive" ? "" : " · " + root.kind)) + '</option>';
+    }).join("");
   });
 }
 
@@ -337,6 +485,7 @@ async function connectPane(side, id) {
   pane.connectionId = Number(id);
   pane.path = normalizePath(c.default_path || "/");
   pane.selected = [];
+  pane.bridgeRoot = "";
   pane.localRoot = null;
   pane.localRootName = "";
   pane.localHandles = new Map();
@@ -357,7 +506,7 @@ async function openLocalDeck(side) {
   try {
     const root = await window.showDirectoryPicker({ mode: "readwrite", id: "simplescp-" + side });
     const pane = state.panes[side];
-    pane.mode = "local";
+    pane.mode = "browser";
     pane.connectionId = 0;
     pane.path = "/";
     pane.selected = [];
@@ -387,13 +536,20 @@ async function localDirectoryForPath(pane, rawPath) {
 function updatePaneModeUI(side) {
   const pane = state.panes[side];
   const el = paneElement(side);
-  const local = pane.mode === "local";
+  const bridge = pane.mode === "bridge";
+  const browser = pane.mode === "browser";
+  const local = bridge || browser;
+
   el.classList.toggle("local-pane", local);
-  $(".path-prefix", el).textContent = local ? "local:" : "sftp:";
-  $(".upload-btn", el).textContent = local ? "⌂ Change root" : "↑ Upload";
-  const subtitle = $(".pane-identity div span", el);
-  if (subtitle) subtitle.textContent = local ? "Local computer" : "Remote filesystem";
-  $(".path-input", el).setAttribute("aria-label", local ? "Local folder path" : "Remote path");
+  el.classList.toggle("bridge-pane", bridge);
+  $(".endpoint-type", el).value = pane.mode;
+  $(".server-select", el).classList.toggle("hidden", pane.mode !== "remote");
+  $(".local-drive-select", el).classList.toggle("hidden", !bridge);
+  $(".local-pair-btn", el).classList.toggle("hidden", !bridge);
+  $(".path-prefix", el).textContent = bridge ? "local:" : browser ? "folder:" : "sftp:";
+  $(".upload-btn", el).textContent = browser ? "Change root" : "Upload";
+  $(".download-btn", el).textContent = bridge ? "Save copy" : "Download";
+  $(".path-input", el).readOnly = bridge && !pane.path;
 }
 
 async function loadLocalPane(side) {
@@ -431,6 +587,45 @@ async function loadLocalPane(side) {
   }
 }
 
+async function loadBridgePane(side) {
+  const pane = state.panes[side];
+  const el = paneElement(side);
+  const tbody = $(".file-list", el);
+
+  if (!state.bridge.token || !state.bridge.roots.length) {
+    if (!await ensureBridge(side)) {
+      tbody.innerHTML = '<tr><td colspan="3" class="muted empty-pane-message"><strong>Local Bridge not connected</strong><span>Click Connect local to pair this computer.</span></td></tr>';
+      return;
+    }
+  }
+
+  if (!pane.path) {
+    const roots = state.bridge.roots.map(function (root) {
+      return { name:root.name, path:root.path, is_dir:true, size:0, mod_time:null };
+    });
+    renderEntries(side, roots);
+    $(".path-input", el).value = "This PC";
+    renderBreadcrumbs(side);
+    setStatus("Ready", "ready");
+    return;
+  }
+
+  try {
+    setStatus("Reading local computer…", "busy");
+    const data = await bridgeFetch("/v1/list?path=" + encodeURIComponent(pane.path));
+    pane.path = data.path;
+    $(".path-input", el).value = pane.path;
+    renderBreadcrumbs(side);
+    renderEntries(side, data.entries || []);
+    filterPane(side, $(".pane-search", el)?.value || "");
+    setStatus("Ready", "ready");
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="3" class="muted">' + escapeHTML(err.message) + '</td></tr>';
+    setStatus("Local computer unavailable", "error");
+    toast(err.message, "error");
+  }
+}
+
 async function withTrustRetry(side, task) {
   try {
     return await task();
@@ -459,7 +654,11 @@ async function loadPane(side) {
   renderBreadcrumbs(side);
   updatePaneSelection(side);
 
-  if (pane.mode === "local") {
+  if (pane.mode === "bridge") {
+    await loadBridgePane(side);
+    return;
+  }
+  if (pane.mode === "browser") {
     await loadLocalPane(side);
     return;
   }
@@ -535,7 +734,7 @@ function rowItem(row) {
     name: row.dataset.name,
     isDir: row.dataset.dir === "1",
     size: Number(row.dataset.size || 0),
-    handle: pane && pane.mode === "local" ? pane.localHandles.get(row.dataset.path) || null : null
+    handle: pane && pane.mode === "browser" ? pane.localHandles.get(row.dataset.path) || null : null
   };
 }
 
@@ -593,21 +792,19 @@ function updatePaneSelection(side) {
   const el = paneElement(side);
   const selected = pane.selected;
   const count = selected.length;
-  if (!count) {
-    $(".selection-text", el).textContent = "Nothing selected";
-  } else if (count === 1) {
-    const item = selected[0];
-    $(".selection-text", el).textContent = item.name + (item.isDir ? " · folder" : " · " + bytes(item.size));
-  } else {
-    $(".selection-text", el).textContent = count + " items selected";
-  }
+  $(".selection-text", el).textContent = !count ? "0 selected" :
+    count === 1 ? selected[0].name + (selected[0].isDir ? " · folder" : " · " + bytes(selected[0].size)) :
+    count + " items selected";
 
-  $(".download-btn", el).disabled = pane.mode === "local" || count !== 1 || selected[0]?.isDir;
+  $(".download-btn", el).disabled = count !== 1 || selected[0]?.isDir || pane.mode === "browser";
   $(".delete-btn", el).disabled = count === 0;
   $(".rename-btn", el).disabled = count !== 1;
 
   const other = state.panes[side === "left" ? "right" : "left"];
-  const destinationReady = other.mode === "local" ? Boolean(other.localRoot) : Boolean(other.connectionId);
+  const destinationReady =
+    other.mode === "bridge" ? Boolean(state.bridge.token && (other.path || state.bridge.roots.length)) :
+    other.mode === "browser" ? Boolean(other.localRoot) :
+    Boolean(other.connectionId);
   $(".copy-to-other", el).disabled = count === 0 || selected.some(function (item) { return item.isDir; }) || !destinationReady;
 }
 
@@ -616,67 +813,90 @@ function wirePanes() {
     const side = el.dataset.pane;
     el.addEventListener("pointerdown", function () { setActivePane(side); });
 
-    $(".server-select", el).addEventListener("change", async function (e) {
-      const value = e.target.value;
-      if (value === "__local__") {
-        await openLocalDeck(side);
-      } else if (value) {
-        await connectPane(side, Number(value));
-      } else {
-        state.panes[side] = makePaneState();
+    $(".endpoint-type", el).addEventListener("change", async function (e) {
+      const pane = state.panes[side];
+      const mode = e.target.value;
+      if (mode === "remote") {
+        pane.mode = "remote";
+        pane.path = "/";
+        pane.bridgeRoot = "";
         renderServerSelects();
         await loadPane(side);
+      } else if (mode === "bridge") {
+        pane.mode = "bridge";
+        pane.connectionId = 0;
+        pane.localRoot = null;
+        pane.path = "";
+        pane.bridgeRoot = "";
+        renderServerSelects();
+        if (await ensureBridge(side)) {
+          pane.path = state.bridge.roots[0]?.path || "";
+          pane.bridgeRoot = pane.path;
+          renderServerSelects();
+          await loadPane(side);
+        } else {
+          updatePaneModeUI(side);
+        }
+      } else {
+        await openLocalDeck(side);
       }
     });
 
+    $(".server-select", el).addEventListener("change", async function (e) {
+      if (e.target.value) await connectPane(side, Number(e.target.value));
+    });
+
+    $(".local-drive-select", el).addEventListener("change", async function (e) {
+      const pane = state.panes[side];
+      pane.mode = "bridge";
+      pane.bridgeRoot = e.target.value || "";
+      pane.path = e.target.value || "";
+      await loadPane(side);
+    });
+
+    $(".local-pair-btn", el).addEventListener("click", function () {
+      state.bridge.pendingSide = side;
+      $("#localBridgeDialog").showModal();
+      detectLocalBridge();
+    });
+
     $(".pane-refresh", el).addEventListener("click", function () { loadPane(side); });
+    $(".home-btn", el).addEventListener("click", function () {
+      const pane = state.panes[side];
+      if (pane.mode === "bridge") pane.path = pane.bridgeRoot || "";
+      else pane.path = "/";
+      loadPane(side);
+    });
     $(".go-btn", el).addEventListener("click", function () {
-      state.panes[side].path = normalizePath($(".path-input", el).value);
+      const pane = state.panes[side];
+      pane.path = pane.mode === "bridge" ? $(".path-input", el).value.trim() : normalizePath($(".path-input", el).value);
       loadPane(side);
     });
     $(".path-input", el).addEventListener("keydown", function (e) {
-      if (e.key === "Enter") {
-        state.panes[side].path = normalizePath(e.target.value);
-        loadPane(side);
-      }
+      if (e.key === "Enter") $(".go-btn", el).click();
     });
     $(".up-btn", el).addEventListener("click", function () {
-      state.panes[side].path = parentPath(state.panes[side].path);
+      const pane = state.panes[side];
+      pane.path = pane.mode === "bridge" ? bridgeParentPath(pane.path) : parentPath(pane.path);
       loadPane(side);
     });
+
     $(".upload-btn", el).addEventListener("click", function () {
-      if (state.panes[side].mode === "local") {
-        openLocalDeck(side);
-        return;
-      }
-      if (!state.panes[side].connectionId) return toast("Choose a server first.", "error");
+      const pane = state.panes[side];
+      if (pane.mode === "browser") return openLocalDeck(side);
+      if (pane.mode === "remote" && !pane.connectionId) return toast("Choose a session first.", "error");
       $(".upload-input", el).click();
     });
     $(".upload-input", el).addEventListener("change", function (e) { uploadFiles(side, Array.from(e.target.files)); });
 
-    ["dragenter", "dragover"].forEach(function (eventName) {
-      el.addEventListener(eventName, function (e) {
-        e.preventDefault();
-        if (state.panes[side].mode === "remote" && !state.panes[side].connectionId) return;
-        el.classList.add("drag-active");
-      });
+    ["dragenter","dragover"].forEach(function (eventName) {
+      el.addEventListener(eventName, function (e) { e.preventDefault(); el.classList.add("drag-active"); });
     });
-    ["dragleave", "drop"].forEach(function (eventName) {
-      el.addEventListener(eventName, function (e) {
-        e.preventDefault();
-        el.classList.remove("drag-active");
-      });
+    ["dragleave","drop"].forEach(function (eventName) {
+      el.addEventListener(eventName, function (e) { e.preventDefault(); el.classList.remove("drag-active"); });
     });
     el.addEventListener("drop", function (e) {
-      if (state.panes[side].mode === "local") {
-        toast("Use the Local computer root selector to change local access.", "error");
-        return;
-      }
-      if (!state.panes[side].connectionId) {
-        toast("Choose a server before dropping files.", "error");
-        return;
-      }
-      const files = Array.from(e.dataTransfer && e.dataTransfer.files ? e.dataTransfer.files : []);
+      const files = Array.from(e.dataTransfer?.files || []);
       if (files.length) uploadFiles(side, files);
     });
 
@@ -687,36 +907,45 @@ function wirePanes() {
     $(".copy-to-other", el).addEventListener("click", function () { copySelected(side); });
     $(".pane-search", el).addEventListener("input", function (e) { filterPane(side, e.target.value); });
   });
+
+  $("#copyLeftToRight")?.addEventListener("click", function () { copySelected("left"); });
+  $("#copyRightToLeft")?.addEventListener("click", function () { copySelected("right"); });
 }
 
 async function uploadFiles(side, files) {
   if (!files.length) return;
   const pane = state.panes[side];
-  const form = new FormData();
-  files.forEach(function (f) { form.append("files", f, f.name); });
   setStatus("Uploading " + files.length + " file" + (files.length === 1 ? "" : "s") + "…", "busy");
-  const activityId = addActivity("upload", "Upload", files.length + " file" + (files.length === 1 ? "" : "s") + " to " + pane.path, "busy");
+  const activityId = addActivity("upload", "Upload", files.length + " file" + (files.length === 1 ? "" : "s") + " to " + (pane.path || "destination"), "busy");
   try {
-    await withTrustRetry(side, function () {
-      return api("/api/connections/" + pane.connectionId + "/upload?path=" + encodeURIComponent(pane.path), { method: "POST", body: form });
-    });
-    toast("Upload complete.", "success");
+    if (pane.mode === "bridge") {
+      if (!pane.path) throw new Error("Choose a local drive or folder first.");
+      for (const file of files) {
+        await bridgeFetch("/v1/file?path=" + encodeURIComponent(bridgeJoin(pane.path, file.name)), { method:"PUT", body:file, headers:{ "Content-Type":"application/octet-stream" } });
+      }
+    } else if (pane.mode === "browser") {
+      throw new Error("Use drag/drop only with a remote server or Local Bridge.");
+    } else {
+      const form = new FormData();
+      files.forEach(function (file) { form.append("files", file, file.name); });
+      await withTrustRetry(side, function () {
+        return api("/api/connections/" + pane.connectionId + "/upload?path=" + encodeURIComponent(pane.path), { method:"POST", body:form });
+      });
+    }
+    updateActivity(activityId, "success", "Upload complete");
     setStatus("Upload complete", "success");
-    updateActivity(activityId, "success", files.length + " file" + (files.length === 1 ? "" : "s") + " uploaded to " + pane.path);
     await loadPane(side);
   } catch (err) {
-    setStatus("Upload failed", "error");
     updateActivity(activityId, "error", err.message);
+    setStatus("Upload failed", "error");
     toast(err.message, "error");
-  } finally {
-    $(".upload-input", paneElement(side)).value = "";
   }
 }
 
 async function createFolder(side) {
   const pane = state.panes[side];
   if (pane.mode === "remote" && !pane.connectionId) return toast("Choose a server first.", "error");
-  if (pane.mode === "local" && !pane.localRoot) return toast("Choose a local folder first.", "error");
+  if (pane.mode === "browser" && !pane.localRoot) return toast("Choose a local folder first.", "error");
 
   const name = await showActionDialog({
     eyebrow: "NEW FOLDER",
@@ -732,7 +961,9 @@ async function createFolder(side) {
   if (!cleanName || cleanName === "." || cleanName === "..") return toast("Invalid folder name.", "error");
 
   try {
-    if (pane.mode === "local") {
+    if (pane.mode === "bridge") {
+      await bridgeFetch("/v1/mkdir", { method:"POST", body:{ path:bridgeJoin(pane.path, cleanName) } });
+    } else if (pane.mode === "browser") {
       const dir = await localDirectoryForPath(pane, pane.path);
       await dir.getDirectoryHandle(cleanName, { create:true });
     } else {
@@ -785,7 +1016,9 @@ async function renameSelected(side) {
   if (!cleanName || cleanName === "." || cleanName === "..") return toast("Invalid name.", "error");
 
   try {
-    if (pane.mode === "local") {
+    if (pane.mode === "bridge") {
+      await bridgeFetch("/v1/rename", { method:"POST", body:{ old_path:selected.path, new_path:bridgeJoin(pane.path, cleanName) } });
+    } else if (pane.mode === "browser") {
       const parent = await localDirectoryForPath(pane, pane.path);
       const handle = selected.handle || pane.localHandles.get(selected.path);
       if (handle && typeof handle.move === "function") {
@@ -809,9 +1042,23 @@ async function renameSelected(side) {
   }
 }
 
-function downloadSelected(side) {
+async function downloadSelected(side) {
   const pane = state.panes[side];
-  if (pane.mode === "local" || pane.selected.length !== 1 || pane.selected[0].isDir) return;
+  if (pane.selected.length !== 1 || pane.selected[0].isDir || pane.mode === "browser") return;
+  if (pane.mode === "bridge") {
+    try {
+      const response = await fetch(state.bridge.base + "/v1/file?path=" + encodeURIComponent(pane.selected[0].path), {
+        headers:{ Authorization:"Bearer " + state.bridge.token }
+      });
+      if (!response.ok) throw new Error("Unable to read local file.");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url; a.download = pane.selected[0].name; a.click();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    } catch (err) { toast(err.message, "error"); }
+    return;
+  }
   location.href = "/api/connections/" + pane.connectionId + "/download?path=" + encodeURIComponent(pane.selected[0].path);
 }
 
@@ -820,7 +1067,7 @@ async function deleteSelected(side) {
   const selected = pane.selected.slice();
   if (!selected.length) return;
   const label = selected.length === 1 ? selected[0].name : selected.length + " selected items";
-  const locationLabel = pane.mode === "local" ? "local computer" : "remote server";
+  const locationLabel = pane.mode === "browser" ? "local computer" : "remote server";
   const confirmed = await showActionDialog({
     eyebrow: "DESTRUCTIVE ACTION",
     title: selected.length === 1 ? "Delete " + label + "?" : "Delete selected items?",
@@ -834,7 +1081,11 @@ async function deleteSelected(side) {
   const activityId = addActivity("delete", "Delete", selected.length + " item" + (selected.length === 1 ? "" : "s") + " from " + pane.path, "busy");
   try {
     setStatus("Deleting " + selected.length + " item" + (selected.length === 1 ? "" : "s") + "…", "busy");
-    if (pane.mode === "local") {
+    if (pane.mode === "bridge") {
+      for (const item of selected) {
+        await bridgeFetch("/v1/delete", { method:"POST", body:{ path:item.path, recursive:item.isDir } });
+      }
+    } else if (pane.mode === "browser") {
       const dir = await localDirectoryForPath(pane, pane.path);
       for (const item of selected) {
         await dir.removeEntry(item.name, { recursive:item.isDir });
@@ -910,42 +1161,90 @@ async function copyLocalToLocal(source, destination, selected) {
   }
 }
 
+async function bridgeFileBlob(item) {
+  const response = await fetch(state.bridge.base + "/v1/file?path=" + encodeURIComponent(item.path), {
+    headers:{ Authorization:"Bearer " + state.bridge.token }
+  });
+  if (!response.ok) throw new Error("Unable to read local file.");
+  return response.blob();
+}
+
+async function copyBridgeToRemote(source, destination, destinationSide, selected) {
+  for (const item of selected) {
+    const blob = await bridgeFileBlob(item);
+    const form = new FormData();
+    form.append("files", blob, item.name);
+    await withTrustRetry(destinationSide, function () {
+      return api("/api/connections/" + destination.connectionId + "/upload?path=" + encodeURIComponent(destination.path), { method:"POST", body:form });
+    });
+  }
+}
+
+async function copyRemoteToBridge(source, destination, selected) {
+  for (const item of selected) {
+    const response = await remoteResponse(source, item);
+    const blob = await response.blob();
+    await bridgeFetch("/v1/file?path=" + encodeURIComponent(bridgeJoin(destination.path, item.name)), {
+      method:"PUT", body:blob, headers:{ "Content-Type":"application/octet-stream" }
+    });
+  }
+}
+
+async function copyBridgeToBridge(source, destination, selected) {
+  for (const item of selected) {
+    const blob = await bridgeFileBlob(item);
+    await bridgeFetch("/v1/file?path=" + encodeURIComponent(bridgeJoin(destination.path, item.name)), {
+      method:"PUT", body:blob, headers:{ "Content-Type":"application/octet-stream" }
+    });
+  }
+}
+
 async function copySelected(side) {
   const source = state.panes[side];
   const destinationSide = side === "left" ? "right" : "left";
   const destination = state.panes[destinationSide];
   const selected = source.selected.slice();
-  const destinationReady = destination.mode === "local" ? Boolean(destination.localRoot) : Boolean(destination.connectionId);
+
+  const destinationReady =
+    destination.mode === "bridge" ? Boolean(state.bridge.token && destination.path) :
+    destination.mode === "browser" ? Boolean(destination.localRoot) :
+    Boolean(destination.connectionId);
+
   if (!selected.length || selected.some(function (item) { return item.isDir; }) || !destinationReady) return;
 
   setStatus("Copying " + selected.length + " file" + (selected.length === 1 ? "" : "s") + "…", "busy");
-  const sourceLabel = source.mode === "local" ? "Local computer" : (connectionById(source.connectionId)?.name || "server");
-  const destinationLabel = destination.mode === "local" ? "Local computer" : (connectionById(destination.connectionId)?.name || "server");
-  const activityId = addActivity("copy", "Transfer", selected.length + " file" + (selected.length === 1 ? "" : "s") + " · " + sourceLabel + " → " + destinationLabel, "busy");
+  const sourceLabel = source.mode === "bridge" ? "Local computer" : source.mode === "browser" ? "Browser folder" : (connectionById(source.connectionId)?.name || "server");
+  const destinationLabel = destination.mode === "bridge" ? "Local computer" : destination.mode === "browser" ? "Browser folder" : (connectionById(destination.connectionId)?.name || "server");
+  const activityId = addActivity("copy", "Transfer", sourceLabel + " → " + destinationLabel, "busy");
 
   try {
-    if (source.mode === "local" && destination.mode === "remote") {
+    if (source.mode === "bridge" && destination.mode === "remote") {
+      await copyBridgeToRemote(source, destination, destinationSide, selected);
+    } else if (source.mode === "remote" && destination.mode === "bridge") {
+      await copyRemoteToBridge(source, destination, selected);
+    } else if (source.mode === "bridge" && destination.mode === "bridge") {
+      await copyBridgeToBridge(source, destination, selected);
+    } else if (source.mode === "browser" && destination.mode === "remote") {
       await copyLocalToRemote(source, destination, destinationSide, selected);
-    } else if (source.mode === "remote" && destination.mode === "local") {
+    } else if (source.mode === "remote" && destination.mode === "browser") {
       await copyRemoteToLocal(source, destination, selected);
-    } else if (source.mode === "local" && destination.mode === "local") {
+    } else if (source.mode === "browser" && destination.mode === "browser") {
       await copyLocalToLocal(source, destination, selected);
     } else {
       for (const item of selected) {
         await api("/api/transfer", {
-          method: "POST",
-          body: {
-            source_connection_id: source.connectionId,
-            source_path: item.path,
-            destination_connection_id: destination.connectionId,
-            destination_path: normalizePath(destination.path + "/" + item.name)
+          method:"POST",
+          body:{
+            source_connection_id:source.connectionId,
+            source_path:item.path,
+            destination_connection_id:destination.connectionId,
+            destination_path:normalizePath(destination.path + "/" + item.name)
           }
         });
       }
     }
-    toast("Transfer complete.", "success");
     setStatus("Transfer complete", "success");
-    updateActivity(activityId, "success", selected.length + " file" + (selected.length === 1 ? "" : "s") + " copied successfully");
+    updateActivity(activityId, "success", selected.length + " file" + (selected.length === 1 ? "" : "s") + " copied");
     await loadPane(destinationSide);
   } catch (err) {
     setStatus("Transfer failed", "error");
@@ -1114,6 +1413,19 @@ async function waitForRestart() {
   $("#updateMessage").textContent = "Update was staged. Reload the page after the container finishes restarting.";
 }
 
+function wireLocalBridge() {
+  const dialog = $("#localBridgeDialog");
+  if (!dialog) return;
+  all(".local-bridge-close").forEach(function (button) {
+    button.addEventListener("click", function () { dialog.close(); });
+  });
+  $("#pairLocalBridgeBtn").addEventListener("click", pairLocalBridge);
+  $("#localBridgeCode").addEventListener("keydown", function (event) {
+    if (event.key === "Enter") pairLocalBridge();
+  });
+  detectLocalBridge().then(function () { refreshBridgeRoots().then(renderServerSelects); });
+}
+
 function wireUpdater() {
   const button = $("#updateBtn");
   const dialog = $("#updateDialog");
@@ -1123,7 +1435,7 @@ function wireUpdater() {
     dialog.showModal();
     refreshUpdateStatus();
   });
-  $(".update-close").forEach(function (close) {
+  all(".update-close").forEach(function (close) {
     close.addEventListener("click", function () { dialog.close(); });
   });
   $("#installUpdateBtn").addEventListener("click", async function () {
@@ -1239,6 +1551,7 @@ document.addEventListener("DOMContentLoaded", async function () {
   wirePanes();
   wirePremiumControls();
   wireDialogs();
+  wireLocalBridge();
   wireUpdater();
   $("#logoutBtn").addEventListener("click", logout);
   $("#refreshConnections").addEventListener("click", loadConnections);
