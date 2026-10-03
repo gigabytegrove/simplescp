@@ -656,3 +656,11 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
   .desktop-root-state{grid-column:1/-1;justify-content:flex-end}
   .acl-table{display:block;overflow:auto}
 }
+
+.desktop-admin-tools{display:flex;align-items:center;gap:6px}
+.desktop-admin-tools a{
+  height:29px;display:inline-flex;align-items:center;padding:0 9px;
+  border:1px solid var(--line);border-radius:5px;background:#fff;
+  color:#35433c;text-decoration:none;font-size:9px;font-weight:700
+}
+.desktop-admin-tools a:hover{background:#f3f7f4;border-color:#a6b0aa}
