@@ -287,39 +287,33 @@ function renderBreadcrumbs(side) {
   const host = $(".breadcrumbs", el);
   if (!host) return;
 
-  if (pane.mode === "browser") {
-    if (!pane.localRoot) {
-      host.innerHTML = '<button type="button" class="breadcrumb current" data-local-home="1">Local roots</button>';
+  if (pane.mode === "desktop") {
+    if (!pane.localRootId) {
+      host.innerHTML = '<button type="button" class="breadcrumb current" data-desktop-home="1">This PC</button>';
       return;
     }
-
-    const parts = normalizePath(pane.path).split("/").filter(Boolean);
-    const crumbs = [
-      { label:"Local roots", action:"home" },
-      { label:pane.localRootName || "Local location", path:"/" }
-    ];
-    let current = "";
+    const root = desktopRootById(pane.localRootId);
+    if (!root) {
+      host.innerHTML = '<button type="button" class="breadcrumb current" data-desktop-home="1">This PC</button>';
+      return;
+    }
+    const parts = desktopRelativeParts(pane.path, root.path);
+    const crumbs = [{label:"This PC",home:true},{label:root.name,path:root.path}];
+    let current = root.path;
     parts.forEach(function (part) {
-      current += "/" + part;
-      crumbs.push({ label:part, path:current });
+      current = desktopJoin(current, part);
+      crumbs.push({label:part,path:current});
     });
-
-    host.innerHTML = crumbs.map(function (crumb, index) {
-      const last = index === crumbs.length - 1;
-      const attrs = crumb.action === "home"
-        ? ' data-local-home="1"'
-        : ' data-path="' + escapeHTML(crumb.path) + '"';
-      return '<button type="button" class="breadcrumb' + (last ? " current" : "") + '"' + attrs + '>' +
-        escapeHTML(crumb.label) + '</button>' + (last ? "" : '<span class="breadcrumb-sep">›</span>');
+    host.innerHTML = crumbs.map(function (crumb,index) {
+      const last=index===crumbs.length-1;
+      return '<button type="button" class="breadcrumb' + (last ? " current" : "") + '"' +
+        (crumb.home ? ' data-desktop-home="1"' : ' data-path="' + escapeHTML(crumb.path) + '"') +
+        '>' + escapeHTML(crumb.label) + '</button>' + (last ? "" : '<span class="breadcrumb-sep">›</span>');
     }).join("");
-
-    host.querySelectorAll(".breadcrumb").forEach(function (button) {
-      button.addEventListener("click", function () {
-        if (button.dataset.localHome === "1") showLocalComputer(side);
-        else {
-          pane.path = button.dataset.path;
-          loadPane(side);
-        }
+    all(".breadcrumb",host).forEach(function(button){
+      button.addEventListener("click",function(){
+        if(button.dataset.desktopHome==="1") showLocalComputer(side);
+        else { pane.path=button.dataset.path; loadPane(side); }
       });
     });
     return;
@@ -332,18 +326,13 @@ function renderBreadcrumbs(side) {
     current += "/" + part;
     crumbs.push({ label:part, path:current });
   });
-
-  host.innerHTML = crumbs.map(function (crumb, index) {
-    const last = index === crumbs.length - 1;
+  host.innerHTML = crumbs.map(function (crumb,index) {
+    const last=index===crumbs.length-1;
     return '<button type="button" class="breadcrumb' + (last ? " current" : "") + '" data-path="' + escapeHTML(crumb.path) + '">' +
       escapeHTML(crumb.label) + '</button>' + (last ? "" : '<span class="breadcrumb-sep">›</span>');
   }).join("");
-
-  host.querySelectorAll(".breadcrumb").forEach(function (button) {
-    button.addEventListener("click", function () {
-      pane.path = button.dataset.path;
-      loadPane(side);
-    });
+  all(".breadcrumb",host).forEach(function(button){
+    button.addEventListener("click",function(){ pane.path=button.dataset.path; loadPane(side); });
   });
 }
 
@@ -514,9 +503,7 @@ function renderConnections() {
 
 function renderServerSelects() {
   all(".file-pane").forEach(function (paneEl) {
-    const side = paneEl.dataset.pane;
-    const pane = state.panes[side];
-
+    const pane = state.panes[paneEl.dataset.pane];
     $(".endpoint-type", paneEl).value = pane.mode;
 
     const server = $(".server-select", paneEl);
@@ -527,11 +514,10 @@ function renderServerSelects() {
     server.innerHTML = serverHTML;
 
     const locations = $(".local-location-select", paneEl);
-    let localHTML = '<option value="__thispc__"' + (pane.mode === "browser" && !pane.localRoot ? " selected" : "") + '>Local roots</option>';
-    state.localLocations.forEach(function (item) {
-      localHTML += '<option value="' + escapeHTML(item.id) + '"' + (pane.mode === "browser" && pane.localRootId === item.id ? " selected" : "") + '>' + escapeHTML(item.name) + '</option>';
+    let localHTML = '<option value="__thispc__"' + (pane.mode === "desktop" && !pane.localRootId ? " selected" : "") + '>This PC</option>';
+    state.desktop.roots.forEach(function (root) {
+      localHTML += '<option value="' + root.id + '"' + (pane.mode === "desktop" && Number(pane.localRootId) === Number(root.id) ? " selected" : "") + '>' + escapeHTML(root.name) + '</option>';
     });
-    localHTML += '<option value="__add__">＋ Add local root…</option>';
     locations.innerHTML = localHTML;
   });
 }
@@ -544,11 +530,8 @@ async function connectPane(side, id) {
   pane.connectionId = Number(id);
   pane.path = normalizePath(c.default_path || "/");
   pane.selected = [];
-  pane.localRoot = null;
   pane.localRootId = "";
   pane.localRootName = "";
-  pane.localHandles = new Map();
-  pane.localVirtualRoot = false;
   renderServerSelects();
   await loadPane(side);
 }
@@ -570,91 +553,67 @@ async function localDirectoryForPath(pane, rawPath) {
 function updatePaneModeUI(side) {
   const pane = state.panes[side];
   const el = paneElement(side);
-  const local = pane.mode === "browser";
-  const localHome = local && !pane.localRoot;
+  const local = pane.mode === "desktop";
+  const home = local && !pane.localRootId;
 
   el.classList.toggle("local-pane", local);
-  el.classList.toggle("local-home", localHome);
+  el.classList.toggle("local-home", home);
   $(".endpoint-type", el).value = pane.mode;
   $(".server-select", el).classList.toggle("hidden", local);
   $(".local-location-select", el).classList.toggle("hidden", !local);
-  $(".add-location-btn", el).classList.toggle("hidden", !local);
   $(".path-prefix", el).textContent = local ? "local" : "sftp";
-  $(".path-input", el).value = localHome ? "Local roots" : pane.path;
-  $(".path-input", el).readOnly = localHome;
+  $(".path-input", el).value = home ? "This PC" : pane.path;
+  $(".path-input", el).readOnly = home;
   $(".upload-btn", el).textContent = local ? "Import" : "Upload";
-  $(".mkdir-btn", el).disabled = localHome;
+  $(".mkdir-btn", el).disabled = home;
 }
 
-async function loadLocalPane(side) {
+async function loadDesktopPane(side) {
   const pane = state.panes[side];
   const el = paneElement(side);
   const tbody = $(".file-list", el);
 
-  if (!pane.localRoot) {
-    pane.localVirtualRoot = true;
-    pane.path = "/";
-    pane.localHandles = new Map();
+  if (!state.desktop.available) {
+    tbody.innerHTML = '<tr><td colspan="3"><div class="local-welcome"><div class="local-welcome-icon">⌂</div><strong>SimpleSCP Desktop is not active</strong><span>Open this server through the SimpleSCP Desktop application to access local disks and mounted filesystems.</span></div></td></tr>';
+    setStatus("Desktop unavailable","error");
+    return;
+  }
 
-    const entries = state.localLocations.map(function (item) {
-      const virtualPath = "/@local/" + item.id;
-      pane.localHandles.set(virtualPath, item.handle);
-      return { name:item.name, path:virtualPath, is_dir:true, size:0, mod_time:null, local_root_id:item.id };
+  if (!pane.localRootId) {
+    const entries = state.desktop.roots.map(function(root){
+      return {
+        name:root.name,
+        path:root.path,
+        is_dir:true,
+        size:Number(root.total_bytes || 0),
+        mod_time:null,
+        local_root_id:String(root.id),
+        local_kind:root.kind,
+        local_detail:root.detail || "",
+        free_bytes:Number(root.free_bytes || 0)
+      };
     });
-
-    $(".path-input", el).value = "Local roots";
+    $(".path-input",el).value="This PC";
     renderBreadcrumbs(side);
-
-    if (!entries.length) {
-      tbody.innerHTML =
-        '<tr class="local-welcome-row"><td colspan="3"><div class="local-welcome">' +
-        '<div class="local-welcome-icon">⌂</div><strong>No local locations yet</strong>' +
-        '<span>Add a drive or folder once, then choose “Allow on every visit” so SimpleSCP can keep it available.</span>' +
-        '<button type="button" class="local-welcome-add">Add local root…</button>' +
-        '</div></td></tr>';
-      $(".local-welcome-add", tbody)?.addEventListener("click", function () { addLocalLocation(side); });
-    } else {
-      renderEntries(side, entries);
-      filterPane(side, $(".pane-search", el)?.value || "");
-    }
-
-    setStatus("Local computer", "ready");
+    renderEntries(side,entries);
+    filterPane(side,$(".pane-search",el)?.value||"");
+    setStatus("Local computer","ready");
     updatePaneSelection(side);
     return;
   }
 
-  pane.localVirtualRoot = false;
-  setStatus("Reading local files…", "busy");
   try {
-    const dir = await localDirectoryForPath(pane, pane.path);
-    const entries = [];
-    pane.localHandles = new Map();
-    for await (const [name, handle] of dir.entries()) {
-      const entryPath = normalizePath(pane.path + "/" + name);
-      pane.localHandles.set(entryPath, handle);
-      if (handle.kind === "directory") {
-        entries.push({ name:name, path:entryPath, is_dir:true, size:0, mod_time:null });
-      } else {
-        const file = await handle.getFile();
-        entries.push({ name:name, path:entryPath, is_dir:false, size:file.size, mod_time:new Date(file.lastModified).toISOString() });
-      }
-    }
-    $(".path-input", el).value = pane.path;
+    setStatus("Reading local files…","busy");
+    const data = await desktopFetch("/_desktop/list?path=" + encodeURIComponent(pane.path));
+    pane.path = data.path;
+    $(".path-input",el).value = pane.path;
     renderBreadcrumbs(side);
-    renderEntries(side, entries);
-    filterPane(side, $(".pane-search", el)?.value || "");
-    setStatus("Ready", "ready");
-  } catch (err) {
-    tbody.innerHTML =
-      '<tr><td colspan="3"><div class="local-welcome compact">' +
-      '<strong>Local access needs reconnecting</strong>' +
-      '<span>Use one permission prompt and choose “Allow on every visit” to keep this location available.</span>' +
-      '<button type="button" class="local-reconnect">Reconnect local access</button>' +
-      '</div></td></tr>';
-    $(".local-reconnect", tbody)?.addEventListener("click", async function () {
-      if (await reconnectLocalAccess(side, pane.localRootId)) await loadPane(side);
-    });
-    setStatus("Local permission required", "error");
+    renderEntries(side,data.entries || []);
+    filterPane(side,$(".pane-search",el)?.value||"");
+    setStatus("Ready","ready");
+  } catch(err) {
+    tbody.innerHTML='<tr><td colspan="3" class="muted empty-pane-message"><strong>Unable to read local computer</strong><span>'+escapeHTML(err.message)+'</span></td></tr>';
+    setStatus("Local access failed","error");
   }
 }
 
