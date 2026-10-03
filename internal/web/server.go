@@ -35,13 +35,14 @@ import (
 var assets embed.FS
 
 type app struct {
-	cfg       config.Config
-	store     *store.Store
-	logger    *slog.Logger
-	templates *template.Template
+	cfg          config.Config
+	store        *store.Store
+	logger       *slog.Logger
+	templates    *template.Template
 	mux          *http.ServeMux
+	settings     *runtimeSettingsState
 	loginLimiter *loginLimiter
-	transferSem  chan struct{}
+	transferSem  *transferLimiter
 	updater      *updater.Manager
 }
 
@@ -51,14 +52,17 @@ const sessionKey ctxKey = "session"
 func New(cfg config.Config, db *store.Store, logger *slog.Logger) (http.Handler, error) {
 	t, err := template.ParseFS(assets, "templates/*.html")
 	if err != nil { return nil, fmt.Errorf("parse templates: %w", err) }
+	settings, err := db.GetServerSettings()
+	if err != nil { return nil, fmt.Errorf("load server settings: %w", err) }
 	a := &app{
 		cfg:cfg,
 		store:db,
 		logger:logger,
 		templates:t,
 		mux:http.NewServeMux(),
-		loginLimiter:newLoginLimiter(cfg.LoginMaxAttempts, cfg.LoginWindow),
-		transferSem:make(chan struct{}, cfg.MaxConcurrentTransfers),
+		settings:newRuntimeSettingsState(settings),
+		loginLimiter:newLoginLimiter(settings.LoginMaxAttempts, time.Duration(settings.LoginWindowSeconds)*time.Second),
+		transferSem:newTransferLimiter(settings.MaxConcurrentTransfers),
 		updater:updater.New(cfg.DataDir),
 	}
 	a.routes()
@@ -89,6 +93,8 @@ func (a *app) routes() {
 	a.mux.HandleFunc("GET /api/update", a.requireAuth(a.requireAdmin(a.updateStatus)))
 	a.mux.HandleFunc("POST /api/update/install", a.requireAuth(a.requireAdmin(a.requireCSRF(a.installUpdate))))
 	a.mux.HandleFunc("POST /api/update/rollback", a.requireAuth(a.requireAdmin(a.requireCSRF(a.rollbackUpdate))))
+	a.mux.HandleFunc("GET /api/admin/settings", a.requireAuth(a.requireAdmin(a.adminSettings)))
+	a.mux.HandleFunc("PUT /api/admin/settings", a.requireAuth(a.requireAdmin(a.requireCSRF(a.adminUpdateSettings))))
 
 	a.mux.HandleFunc("POST /api/desktop/enroll", a.requireAuth(a.requireCSRF(a.enrollDesktop)))
 	a.mux.HandleFunc("GET /api/desktop/access", a.requireAuth(a.desktopAccess))
@@ -112,7 +118,7 @@ func (a *app) securityHeaders(next http.Handler) http.Handler {
 			w.Header().Set("Cache-Control", "no-store")
 			w.Header().Set("Pragma", "no-cache")
 		}
-		if a.cfg.CookieSecure {
+		if a.runtimeSettings().CookieSecure {
 			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		}
 		next.ServeHTTP(w,r)
@@ -208,16 +214,11 @@ func secureEqual(a, b string) bool {
 }
 
 func (a *app) acquireTransfer(r *http.Request) bool {
-	select {
-	case a.transferSem <- struct{}{}:
-		return true
-	case <-r.Context().Done():
-		return false
-	}
+	return a.transferSem.acquire(r.Context())
 }
 
 func (a *app) releaseTransfer() {
-	<-a.transferSem
+	a.transferSem.release()
 }
 
 func (a *app) sessionMiddleware(next http.Handler) http.Handler {
@@ -314,7 +315,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	username := strings.TrimSpace(r.FormValue("username"))
 	limitKey := clientIP(r) + "\x00" + strings.ToLower(username)
 	if !a.loginLimiter.allow(limitKey, time.Now()) {
-		w.Header().Set("Retry-After", strconv.FormatInt(int64(a.cfg.LoginWindow.Seconds()), 10))
+		w.Header().Set("Retry-After", strconv.FormatInt(a.runtimeSettings().LoginWindowSeconds, 10))
 		http.Error(w, "Too many login attempts", http.StatusTooManyRequests)
 		return
 	}
@@ -333,21 +334,23 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 	}
 	a.loginLimiter.reset(limitKey)
 
-	token, _, expires, err := a.store.CreateSession(u.ID,a.cfg.SessionTTL)
+	settings := a.runtimeSettings()
+	sessionTTL := time.Duration(settings.SessionTTLSeconds) * time.Second
+	token, _, expires, err := a.store.CreateSession(u.ID,sessionTTL)
 	if err != nil {
 		http.Error(w,"Unable to create session",http.StatusInternalServerError)
 		return
 	}
 	http.SetCookie(w,&http.Cookie{
-		Name:"simplescp_session",Value:token,Path:"/",Expires:expires,MaxAge:int(a.cfg.SessionTTL.Seconds()),HttpOnly:true,
-		Secure:a.cfg.CookieSecure,SameSite:http.SameSiteStrictMode,
+		Name:"simplescp_session",Value:token,Path:"/",Expires:expires,MaxAge:int(settings.SessionTTLSeconds),HttpOnly:true,
+		Secure:settings.CookieSecure,SameSite:http.SameSiteStrictMode,
 	})
 	http.Redirect(w,r,"/",http.StatusSeeOther)
 }
 
 func (a *app) logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie("simplescp_session"); err == nil { _ = a.store.DeleteSession(c.Value) }
-	http.SetCookie(w,&http.Cookie{Name:"simplescp_session",Value:"",Path:"/",MaxAge:-1,HttpOnly:true,Secure:a.cfg.CookieSecure,SameSite:http.SameSiteStrictMode})
+	http.SetCookie(w,&http.Cookie{Name:"simplescp_session",Value:"",Path:"/",MaxAge:-1,HttpOnly:true,Secure:a.runtimeSettings().CookieSecure,SameSite:http.SameSiteStrictMode})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -450,7 +453,7 @@ func (a *app) trustConnection(w http.ResponseWriter,r *http.Request) {
 	}
 	c,err:=a.store.GetConnection(userID(r),id)
 	if err!=nil { writeError(w,404,"connection not found"); return }
-	fp,err:=sshclient.ProbeFingerprint(c,a.cfg.SSHTimeout)
+	fp,err:=sshclient.ProbeFingerprint(c,time.Duration(a.runtimeSettings().SSHTimeoutSeconds)*time.Second)
 	if err!=nil { writeError(w,502,err.Error()); return }
 	if !secureEqual(fp, strings.TrimSpace(in.Fingerprint)) {
 		writeError(w,http.StatusConflict,"host key changed before confirmation; verify the new fingerprint")
@@ -463,7 +466,7 @@ func (a *app) trustConnection(w http.ResponseWriter,r *http.Request) {
 func (a *app) dialConnection(r *http.Request,id int64) (*sshclient.Client,error) {
 	c,err:=a.store.GetConnection(userID(r),id)
 	if err!=nil { return nil,errors.New("connection not found") }
-	return sshclient.Dial(c,a.cfg.SSHTimeout)
+	return sshclient.Dial(c,time.Duration(a.runtimeSettings().SSHTimeoutSeconds)*time.Second)
 }
 
 func sshError(w http.ResponseWriter,err error) {
@@ -512,7 +515,7 @@ func (a *app) deleteRemote(w http.ResponseWriter,r *http.Request) {
 func (a *app) uploadRemote(w http.ResponseWriter,r *http.Request) {
 	if !a.acquireTransfer(r) { writeError(w,499,"request canceled"); return }
 	defer a.releaseTransfer()
-	r.Body = http.MaxBytesReader(w, r.Body, a.cfg.MaxUploadBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, a.runtimeSettings().MaxUploadBytes)
 	id,err:=parseID(r); if err!=nil { writeError(w,400,"invalid connection id"); return }
 	target:=sshclient.CleanRemote(r.URL.Query().Get("path"))
 	client,err:=a.dialConnection(r,id); if err!=nil { sshError(w,err); return }; defer client.Close()
