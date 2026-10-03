@@ -97,7 +97,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  edge-release:
+  live-release:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: test
     runs-on: ubuntu-latest
@@ -113,16 +113,20 @@ jobs:
           go-version: "1.27.1"
           cache: true
 
-      - name: Build edge updater assets
+      - name: Build Live updater assets
         shell: bash
         run: |
           set -euo pipefail
-          EDGE_TAG="edge-${GITHUB_SHA:0:12}"
-          echo "EDGE_TAG=$EDGE_TAG" >> "$GITHUB_ENV"
+          LIVE_TAG="v1.0.${GITHUB_RUN_NUMBER}"
+          BOOTSTRAP_TAG="edge-bootstrap-${GITHUB_SHA:0:12}"
+          BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "LIVE_TAG=$LIVE_TAG" >> "$GITHUB_ENV"
+          echo "BOOTSTRAP_TAG=$BOOTSTRAP_TAG" >> "$GITHUB_ENV"
+
           mkdir -p dist
           for arch in amd64 arm64; do
             CGO_ENABLED=0 GOOS=linux GOARCH="$arch" go build -trimpath \
-              -ldflags="-s -w -X github.com/gigabytegrove/simplescp/internal/buildinfo.Version=$EDGE_TAG -X github.com/gigabytegrove/simplescp/internal/buildinfo.Commit=${GITHUB_SHA} -X github.com/gigabytegrove/simplescp/internal/buildinfo.BuildTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              -ldflags="-s -w -X github.com/gigabytegrove/simplescp/internal/buildinfo.Version=$LIVE_TAG -X github.com/gigabytegrove/simplescp/internal/buildinfo.Commit=${GITHUB_SHA} -X github.com/gigabytegrove/simplescp/internal/buildinfo.BuildTime=$BUILD_TIME" \
               -o "dist/simplescp-linux-$arch" ./cmd/simplescp
           done
           (
@@ -130,17 +134,46 @@ jobs:
             sha256sum simplescp-linux-* > SHA256SUMS
           )
 
-      - name: Publish immutable edge release
+      - name: Publish Live release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          gh release create "$EDGE_TAG" dist/* \
+          gh release create "$LIVE_TAG" dist/* \
+            --target "$GITHUB_SHA" \
+            --latest \
+            --title "SimpleSCP $LIVE_TAG" \
+            --notes "Live release from main at commit $GITHUB_SHA."
+
+      - name: Publish legacy updater bootstrap
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$BOOTSTRAP_TAG" dist/* \
             --target "$GITHUB_SHA" \
             --prerelease \
-            --title "SimpleSCP Edge · ${GITHUB_SHA:0:12}" \
-            --notes "Automatically published from main at commit $GITHUB_SHA."
+            --title "SimpleSCP updater bootstrap" \
+            --notes "Compatibility bootstrap for older Edge-channel containers. The binary itself is $LIVE_TAG."
+
+      - name: Remove obsolete Edge releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release list --limit 100 --json tagName,isPrerelease --jq '.[] | select(.isPrerelease == true) | .tagName' |
+          while IFS= read -r tag; do
+            case "$tag" in
+              edge|edge-*)
+                if [ "$tag" != "$BOOTSTRAP_TAG" ]; then
+                  gh release delete "$tag" --yes
+                fi
+                ;;
+            esac
+          done
 
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
