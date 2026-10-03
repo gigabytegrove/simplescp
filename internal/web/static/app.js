@@ -261,12 +261,6 @@ function renderBreadcrumbs(side) {
   const host = $(".breadcrumbs", el);
   if (!host) return;
 
-  if (pane.mode === "bridge") {
-    const label = pane.path || "This PC";
-    host.innerHTML = '<button type="button" class="breadcrumb current">' + escapeHTML(label) + '</button>';
-    return;
-  }
-
   const parts = normalizePath(pane.path).split("/").filter(Boolean);
   const crumbs = [{ label: pane.mode === "browser" ? (pane.localRootName || "Local") : "/", path: "/" }];
   let current = "";
@@ -456,8 +450,7 @@ function renderServerSelects() {
     const side = paneEl.dataset.pane;
     const pane = state.panes[side];
 
-    const endpoint = $(".endpoint-type", paneEl);
-    endpoint.value = pane.mode === "browser" ? "browser" : pane.mode;
+    $(".endpoint-type", paneEl).value = pane.mode;
 
     const server = $(".server-select", paneEl);
     let serverHTML = '<option value="">Choose session…</option>';
@@ -466,11 +459,13 @@ function renderServerSelects() {
     });
     server.innerHTML = serverHTML;
 
-    const drives = $(".local-drive-select", paneEl);
-    drives.innerHTML = '<option value="">This PC</option>' + state.bridge.roots.map(function (root) {
-      return '<option value="' + escapeHTML(root.path) + '"' + (pane.mode === "bridge" && pane.bridgeRoot === root.path ? " selected" : "") + '>' +
-        escapeHTML(root.name + (root.kind === "drive" ? "" : " · " + root.kind)) + '</option>';
-    }).join("");
+    const locations = $(".local-location-select", paneEl);
+    let localHTML = '<option value="">Choose local location…</option>';
+    state.localLocations.forEach(function (item) {
+      localHTML += '<option value="' + escapeHTML(item.id) + '"' + (pane.mode === "browser" && pane.localRootId === item.id ? " selected" : "") + '>' + escapeHTML(item.name) + '</option>';
+    });
+    localHTML += '<option value="__add__">＋ Add location…</option>';
+    locations.innerHTML = localHTML;
   });
 }
 
@@ -482,42 +477,30 @@ async function connectPane(side, id) {
   pane.connectionId = Number(id);
   pane.path = normalizePath(c.default_path || "/");
   pane.selected = [];
-  pane.bridgeRoot = "";
   pane.localRoot = null;
+  pane.localRootId = "";
   pane.localRootName = "";
   pane.localHandles = new Map();
   renderServerSelects();
   await loadPane(side);
 }
 
-function localDeckSupported() {
-  return window.isSecureContext && typeof window.showDirectoryPicker === "function";
-}
-
 async function openLocalDeck(side) {
-  if (!localDeckSupported()) {
-    renderServerSelects();
-    toast("Local computer access requires Chrome/Edge in a secure HTTPS context (or localhost).", "error");
+  if (!state.localLocations.length) {
+    await addLocalLocation(side);
     return;
   }
-  try {
-    const root = await window.showDirectoryPicker({ mode: "readwrite", id: "simplescp-" + side });
-    const pane = state.panes[side];
-    pane.mode = "browser";
-    pane.connectionId = 0;
-    pane.path = "/";
-    pane.selected = [];
-    pane.localRoot = root;
-    pane.localRootName = root.name || "Local";
-    pane.localHandles = new Map();
-    renderServerSelects();
-    await loadPane(side);
-  } catch (err) {
-    renderServerSelects();
-    if (!err || err.name !== "AbortError") {
-      toast(err && err.message ? err.message : "Unable to open local folder.", "error");
-    }
+  const pane = state.panes[side];
+  pane.mode = "browser";
+  pane.connectionId = 0;
+  pane.path = "/";
+  pane.selected = [];
+  if (!pane.localRoot && state.localLocations[0]) {
+    await selectLocalLocation(side, state.localLocations[0].id);
+    return;
   }
+  renderServerSelects();
+  await loadPane(side);
 }
 
 async function localDirectoryForPath(pane, rawPath) {
@@ -533,20 +516,17 @@ async function localDirectoryForPath(pane, rawPath) {
 function updatePaneModeUI(side) {
   const pane = state.panes[side];
   const el = paneElement(side);
-  const bridge = pane.mode === "bridge";
-  const browser = pane.mode === "browser";
-  const local = bridge || browser;
+  const local = pane.mode === "browser";
 
   el.classList.toggle("local-pane", local);
-  el.classList.toggle("bridge-pane", bridge);
   $(".endpoint-type", el).value = pane.mode;
-  $(".server-select", el).classList.toggle("hidden", pane.mode !== "remote");
-  $(".local-drive-select", el).classList.toggle("hidden", !bridge);
-  $(".local-pair-btn", el).classList.toggle("hidden", !bridge);
-  $(".path-prefix", el).textContent = bridge ? "local:" : browser ? "folder:" : "sftp:";
-  $(".upload-btn", el).textContent = browser ? "Change root" : "Upload";
-  $(".download-btn", el).textContent = bridge ? "Save copy" : "Download";
-  $(".path-input", el).readOnly = bridge && !pane.path;
+  $(".server-select", el).classList.toggle("hidden", local);
+  $(".local-location-select", el).classList.toggle("hidden", !local);
+  $(".add-location-btn", el).classList.toggle("hidden", !local);
+  $(".path-prefix", el).textContent = local ? "local:" : "sftp:";
+  $(".upload-btn", el).textContent = local ? "Add files…" : "Upload";
+  $(".download-btn", el).textContent = "Download";
+  $(".path-input", el).readOnly = false;
 }
 
 async function loadLocalPane(side) {
@@ -584,45 +564,6 @@ async function loadLocalPane(side) {
   }
 }
 
-async function loadBridgePane(side) {
-  const pane = state.panes[side];
-  const el = paneElement(side);
-  const tbody = $(".file-list", el);
-
-  if (!state.bridge.token || !state.bridge.roots.length) {
-    if (!await ensureBridge(side)) {
-      tbody.innerHTML = '<tr><td colspan="3" class="muted empty-pane-message"><strong>Local Bridge not connected</strong><span>Click Connect local to pair this computer.</span></td></tr>';
-      return;
-    }
-  }
-
-  if (!pane.path) {
-    const roots = state.bridge.roots.map(function (root) {
-      return { name:root.name, path:root.path, is_dir:true, size:0, mod_time:null };
-    });
-    renderEntries(side, roots);
-    $(".path-input", el).value = "This PC";
-    renderBreadcrumbs(side);
-    setStatus("Ready", "ready");
-    return;
-  }
-
-  try {
-    setStatus("Reading local computer…", "busy");
-    const data = await bridgeFetch("/v1/list?path=" + encodeURIComponent(pane.path));
-    pane.path = data.path;
-    $(".path-input", el).value = pane.path;
-    renderBreadcrumbs(side);
-    renderEntries(side, data.entries || []);
-    filterPane(side, $(".pane-search", el)?.value || "");
-    setStatus("Ready", "ready");
-  } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="3" class="muted">' + escapeHTML(err.message) + '</td></tr>';
-    setStatus("Local computer unavailable", "error");
-    toast(err.message, "error");
-  }
-}
-
 async function withTrustRetry(side, task) {
   try {
     return await task();
@@ -651,10 +592,6 @@ async function loadPane(side) {
   renderBreadcrumbs(side);
   updatePaneSelection(side);
 
-  if (pane.mode === "bridge") {
-    await loadBridgePane(side);
-    return;
-  }
   if (pane.mode === "browser") {
     await loadLocalPane(side);
     return;
@@ -793,15 +730,12 @@ function updatePaneSelection(side) {
     count === 1 ? selected[0].name + (selected[0].isDir ? " · folder" : " · " + bytes(selected[0].size)) :
     count + " items selected";
 
-  $(".download-btn", el).disabled = count !== 1 || selected[0]?.isDir || pane.mode === "browser";
+  $(".download-btn", el).disabled = pane.mode === "browser" || count !== 1 || selected[0]?.isDir;
   $(".delete-btn", el).disabled = count === 0;
   $(".rename-btn", el).disabled = count !== 1;
 
   const other = state.panes[side === "left" ? "right" : "left"];
-  const destinationReady =
-    other.mode === "bridge" ? Boolean(state.bridge.token && (other.path || state.bridge.roots.length)) :
-    other.mode === "browser" ? Boolean(other.localRoot) :
-    Boolean(other.connectionId);
+  const destinationReady = other.mode === "browser" ? Boolean(other.localRoot) : Boolean(other.connectionId);
   $(".copy-to-other", el).disabled = count === 0 || selected.some(function (item) { return item.isDir; }) || !destinationReady;
 }
 
@@ -812,30 +746,20 @@ function wirePanes() {
 
     $(".endpoint-type", el).addEventListener("change", async function (e) {
       const pane = state.panes[side];
-      const mode = e.target.value;
-      if (mode === "remote") {
+      if (e.target.value === "remote") {
         pane.mode = "remote";
         pane.path = "/";
-        pane.bridgeRoot = "";
         renderServerSelects();
         await loadPane(side);
-      } else if (mode === "bridge") {
-        pane.mode = "bridge";
+      } else {
+        pane.mode = "browser";
         pane.connectionId = 0;
-        pane.localRoot = null;
-        pane.path = "";
-        pane.bridgeRoot = "";
-        renderServerSelects();
-        if (await ensureBridge(side)) {
-          pane.path = state.bridge.roots[0]?.path || "";
-          pane.bridgeRoot = pane.path;
+        if (!pane.localRoot) {
+          await openLocalDeck(side);
+        } else {
           renderServerSelects();
           await loadPane(side);
-        } else {
-          updatePaneModeUI(side);
         }
-      } else {
-        await openLocalDeck(side);
       }
     });
 
@@ -843,48 +767,42 @@ function wirePanes() {
       if (e.target.value) await connectPane(side, Number(e.target.value));
     });
 
-    $(".local-drive-select", el).addEventListener("change", async function (e) {
-      const pane = state.panes[side];
-      pane.mode = "bridge";
-      pane.bridgeRoot = e.target.value || "";
-      pane.path = e.target.value || "";
-      await loadPane(side);
+    $(".local-location-select", el).addEventListener("change", async function (e) {
+      if (e.target.value === "__add__") {
+        await addLocalLocation(side);
+      } else if (e.target.value) {
+        await selectLocalLocation(side, e.target.value);
+      }
     });
 
-    $(".local-pair-btn", el).addEventListener("click", function () {
-      state.bridge.pendingSide = side;
-      $("#localBridgeDialog").showModal();
-      detectLocalBridge();
-    });
+    $(".add-location-btn", el).addEventListener("click", function () { addLocalLocation(side); });
 
     $(".pane-refresh", el).addEventListener("click", function () { loadPane(side); });
     $(".home-btn", el).addEventListener("click", function () {
-      const pane = state.panes[side];
-      if (pane.mode === "bridge") pane.path = pane.bridgeRoot || "";
-      else pane.path = "/";
+      state.panes[side].path = "/";
       loadPane(side);
     });
     $(".go-btn", el).addEventListener("click", function () {
-      const pane = state.panes[side];
-      pane.path = pane.mode === "bridge" ? $(".path-input", el).value.trim() : normalizePath($(".path-input", el).value);
+      state.panes[side].path = normalizePath($(".path-input", el).value);
       loadPane(side);
     });
     $(".path-input", el).addEventListener("keydown", function (e) {
       if (e.key === "Enter") $(".go-btn", el).click();
     });
     $(".up-btn", el).addEventListener("click", function () {
-      const pane = state.panes[side];
-      pane.path = pane.mode === "bridge" ? bridgeParentPath(pane.path) : parentPath(pane.path);
+      state.panes[side].path = parentPath(state.panes[side].path);
       loadPane(side);
     });
 
     $(".upload-btn", el).addEventListener("click", function () {
       const pane = state.panes[side];
-      if (pane.mode === "browser") return openLocalDeck(side);
       if (pane.mode === "remote" && !pane.connectionId) return toast("Choose a session first.", "error");
       $(".upload-input", el).click();
     });
-    $(".upload-input", el).addEventListener("change", function (e) { uploadFiles(side, Array.from(e.target.files)); });
+    $(".upload-input", el).addEventListener("change", function (e) {
+      uploadFiles(side, Array.from(e.target.files));
+      e.target.value = "";
+    });
 
     ["dragenter","dragover"].forEach(function (eventName) {
       el.addEventListener(eventName, function (e) { e.preventDefault(); el.classList.add("drag-active"); });
