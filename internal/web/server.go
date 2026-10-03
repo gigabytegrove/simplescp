@@ -89,6 +89,16 @@ func (a *app) routes() {
 	a.mux.HandleFunc("GET /api/update", a.requireAuth(a.requireAdmin(a.updateStatus)))
 	a.mux.HandleFunc("POST /api/update/install", a.requireAuth(a.requireAdmin(a.requireCSRF(a.installUpdate))))
 	a.mux.HandleFunc("POST /api/update/rollback", a.requireAuth(a.requireAdmin(a.requireCSRF(a.rollbackUpdate))))
+
+	a.mux.HandleFunc("POST /api/desktop/enroll", a.requireAuth(a.requireCSRF(a.enrollDesktop)))
+	a.mux.HandleFunc("GET /api/desktop/access", a.requireAuth(a.desktopAccess))
+	a.mux.HandleFunc("POST /api/desktop/heartbeat", a.desktopHeartbeat)
+
+	a.mux.HandleFunc("GET /api/admin/desktops", a.requireAuth(a.requireAdmin(a.adminDesktops)))
+	a.mux.HandleFunc("PUT /api/admin/desktops/{id}", a.requireAuth(a.requireAdmin(a.requireCSRF(a.adminUpdateDesktop))))
+	a.mux.HandleFunc("DELETE /api/admin/desktops/{id}", a.requireAuth(a.requireAdmin(a.requireCSRF(a.adminDeleteDesktop))))
+	a.mux.HandleFunc("PUT /api/admin/desktops/{id}/roots/{rootID}", a.requireAuth(a.requireAdmin(a.requireCSRF(a.adminUpdateDesktopRoot))))
+	a.mux.HandleFunc("PUT /api/admin/desktops/{id}/roots/{rootID}/acl/{userID}", a.requireAuth(a.requireAdmin(a.requireCSRF(a.adminSetDesktopACL))))
 }
 
 func (a *app) securityHeaders(next http.Handler) http.Handler {
