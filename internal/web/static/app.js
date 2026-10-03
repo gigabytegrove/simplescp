@@ -416,31 +416,34 @@ async function loadConnections() {
 function renderConnections() {
   const host = $("#connectionsList");
   if (!state.connections.length) {
-    host.innerHTML = '<div class="empty-state"><strong>No saved servers</strong><span>Add your first SSH connection to start browsing remote files.</span></div>';
+    host.innerHTML = '<div class="empty-state"><strong>No saved sessions</strong><span>Create a session to connect to a remote server.</span></div>';
     return;
   }
+
   host.innerHTML = state.connections.map(function (c) {
     const trusted = Boolean(c.host_key_fingerprint);
-    return '<div class="connection-card" data-id="' + c.id + '">' +
+    const title = c.username + "@" + c.host + ":" + c.port;
+    return '<div class="connection-card" data-id="' + c.id + '" title="' + escapeHTML(title) + '">' +
       '<div class="connection-card-top">' +
-        '<div class="name"><span class="trust-dot ' + (trusted ? "trusted" : "") + '"></span>' + escapeHTML(c.name) + '</div>' +
-        '<span class="connection-state ' + (trusted ? "trusted" : "") + '">' + (trusted ? "Verified" : "Unverified") + '</span>' +
+        '<div class="name"><span class="trust-dot ' + (trusted ? "trusted" : "") + '"></span><span class="connection-name">' + escapeHTML(c.name) + '</span></div>' +
       '</div>' +
-      '<div class="meta">' + escapeHTML(c.username) + '@' + escapeHTML(c.host) + ':' + c.port + '</div>' +
       '<div class="connection-actions">' +
-      '<button data-action="left">Open left</button>' +
-      '<button data-action="right">Open right</button>' +
-      '<button data-action="edit" title="Edit connection" aria-label="Edit connection">•••</button>' +
+        '<button data-action="left" title="Open in left pane" aria-label="Open ' + escapeHTML(c.name) + ' in left pane">L</button>' +
+        '<button data-action="right" title="Open in right pane" aria-label="Open ' + escapeHTML(c.name) + ' in right pane">R</button>' +
+        '<button data-action="edit" title="Edit session" aria-label="Edit ' + escapeHTML(c.name) + '">•••</button>' +
       '</div></div>';
   }).join("");
 
   all(".connection-card", host).forEach(function (card) {
     card.addEventListener("click", function (event) {
-      const btn = event.target.closest("button");
-      if (!btn) return;
       const id = Number(card.dataset.id);
-      if (btn.dataset.action === "edit") openConnectionDialog(id);
-      else connectPane(btn.dataset.action, id);
+      const btn = event.target.closest("button");
+      if (btn) {
+        if (btn.dataset.action === "edit") openConnectionDialog(id);
+        else connectPane(btn.dataset.action, id);
+        return;
+      }
+      connectPane(state.activePane, id);
     });
   });
 }
@@ -736,7 +739,10 @@ function updatePaneSelection(side) {
 
   const other = state.panes[side === "left" ? "right" : "left"];
   const destinationReady = other.mode === "browser" ? Boolean(other.localRoot) : Boolean(other.connectionId);
-  $(".copy-to-other", el).disabled = count === 0 || selected.some(function (item) { return item.isDir; }) || !destinationReady;
+  const blocked = count === 0 || selected.some(function (item) { return item.isDir; }) || !destinationReady;
+  $(".copy-to-other", el).disabled = blocked;
+  const centerButton = side === "left" ? $("#copyLeftToRight") : $("#copyRightToLeft");
+  if (centerButton) centerButton.disabled = blocked;
 }
 
 function wirePanes() {
