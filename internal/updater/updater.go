@@ -82,7 +82,7 @@ func (m *Manager) Status(ctx context.Context, current, commit, buildTime string)
 	updateAvailable := normalizeVersion(current) != normalizeVersion(rel.TagName)
 	latestLabel := rel.TagName
 	if useEdgeChannel(current) {
-		latestLabel = "edge"
+		latestLabel = rel.TagName
 		trimmedCommit := strings.TrimSpace(commit)
 		if trimmedCommit != "" && trimmedCommit != "unknown" {
 			updateAvailable = !strings.EqualFold(trimmedCommit, strings.TrimSpace(rel.TargetCommitish))
@@ -123,10 +123,23 @@ func (m *Manager) releaseFor(ctx context.Context, current string) (release, erro
 		if err := json.Unmarshal(body, &releases); err != nil {
 			return release{}, fmt.Errorf("decode edge releases: %w", err)
 		}
+		var newest release
+		var newestTime time.Time
 		for _, rel := range releases {
-			if rel.Prerelease && strings.HasPrefix(strings.ToLower(strings.TrimSpace(rel.TagName)), "edge-") {
-				return rel, nil
+			if !rel.Prerelease || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(rel.TagName)), "edge-") {
+				continue
 			}
+			publishedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(rel.PublishedAt))
+			if err != nil {
+				continue
+			}
+			if newest.TagName == "" || publishedAt.After(newestTime) {
+				newest = rel
+				newestTime = publishedAt
+			}
+		}
+		if newest.TagName != "" {
+			return newest, nil
 		}
 
 		// Compatibility fallback for deployments created before immutable
