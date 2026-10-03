@@ -645,8 +645,8 @@ async function loadPane(side) {
   renderBreadcrumbs(side);
   updatePaneSelection(side);
 
-  if (pane.mode === "browser") {
-    await loadLocalPane(side);
+  if (pane.mode === "desktop") {
+    await loadDesktopPane(side);
     return;
   }
 
@@ -692,17 +692,22 @@ function renderEntries(side, entries) {
 
   tbody.innerHTML = entries.map(function (entry) {
     const isLocalRoot = Boolean(entry.local_root_id);
-    const kind = isLocalRoot ? { icon:"▣", kind:"drive" } : fileKind(entry.name, entry.is_dir);
+    const kind = isLocalRoot
+      ? { icon: entry.local_kind === "network" ? "⇄" : entry.local_kind === "removable" ? "▣" : "▰", kind:"drive" }
+      : fileKind(entry.name, entry.is_dir);
+    const rootUsage = isLocalRoot && Number(entry.size || 0) > 0
+      ? bytes(Math.max(0, Number(entry.size || 0) - Number(entry.free_bytes || 0))) + " used"
+      : "Location";
     return '<tr class="entry-row' + (isLocalRoot ? " local-root-row" : "") + '" role="row" aria-selected="false" ' +
       'data-path="' + escapeHTML(entry.path) + '" data-name="' + escapeHTML(entry.name) + '" ' +
-      'data-dir="' + (entry.is_dir ? "1" : "0") + '" data-size="' + entry.size + '"' +
+      'data-dir="' + (entry.is_dir ? "1" : "0") + '" data-size="' + Number(entry.size || 0) + '"' +
       (isLocalRoot ? ' data-local-root-id="' + escapeHTML(entry.local_root_id) + '"' : "") + '>' +
       '<td><div class="file-name"><span class="file-icon file-kind-' + kind.kind + '">' + kind.icon + '</span>' +
       '<span class="file-name-text">' + escapeHTML(entry.name) + '</span>' +
-      (isLocalRoot ? '<span class="entry-badge">LOCAL</span>' : "") +
+      (isLocalRoot ? '<span class="entry-badge">' + escapeHTML((entry.local_kind || "drive").toUpperCase()) + '</span>' : "") +
       '</div></td>' +
-      '<td>' + (isLocalRoot ? "Location" : entry.is_dir ? "—" : bytes(entry.size)) + '</td>' +
-      '<td>' + (entry.mod_time ? new Date(entry.mod_time).toLocaleString() : "—") + '</td>' +
+      '<td>' + (isLocalRoot ? escapeHTML(rootUsage) : entry.is_dir ? "—" : bytes(entry.size)) + '</td>' +
+      '<td>' + (isLocalRoot ? escapeHTML(entry.local_detail || "") : entry.mod_time ? new Date(entry.mod_time).toLocaleString() : "—") + '</td>' +
       '</tr>';
   }).join("");
 
@@ -713,7 +718,7 @@ function renderEntries(side, entries) {
     });
     row.addEventListener("dblclick", async function () {
       if (row.dataset.localRootId) {
-        await selectLocalLocation(side, row.dataset.localRootId);
+        await selectDesktopRoot(side, row.dataset.localRootId);
         return;
       }
       if (row.dataset.dir === "1") {
@@ -725,15 +730,12 @@ function renderEntries(side, entries) {
 }
 
 function rowItem(row) {
-  const side = row.closest(".file-pane")?.dataset.pane;
-  const pane = side ? state.panes[side] : null;
   return {
     path: row.dataset.path,
     name: row.dataset.name,
     isDir: row.dataset.dir === "1",
     size: Number(row.dataset.size || 0),
-    localRootId: row.dataset.localRootId || "",
-    handle: pane && pane.mode === "browser" ? pane.localHandles.get(row.dataset.path) || null : null
+    localRootId: row.dataset.localRootId || ""
   };
 }
 
@@ -792,18 +794,22 @@ function updatePaneSelection(side) {
   const selected = pane.selected;
   const count = selected.length;
   const hasLocalRoot = selected.some(function (item) { return Boolean(item.localRootId); });
+  const access = pane.mode === "desktop" && pane.localRootId ? desktopRootById(pane.localRootId) : null;
 
   $(".selection-text", el).textContent = !count ? "0 selected" :
-    count === 1 ? selected[0].name + (selected[0].localRootId ? " · local location" : selected[0].isDir ? " · folder" : " · " + bytes(selected[0].size)) :
+    count === 1 ? selected[0].name + (selected[0].localRootId ? " · local drive" : selected[0].isDir ? " · folder" : " · " + bytes(selected[0].size)) :
     count + " items selected";
 
-  $(".download-btn", el).disabled = pane.mode === "browser" || count !== 1 || selected[0]?.isDir;
-  $(".delete-btn", el).disabled = count === 0 || hasLocalRoot;
-  $(".rename-btn", el).disabled = count !== 1 || hasLocalRoot;
+  $(".download-btn", el).disabled = count !== 1 || selected[0]?.isDir || hasLocalRoot;
+  $(".delete-btn", el).disabled = count === 0 || hasLocalRoot || (pane.mode === "desktop" && access && !access.can_delete);
+  $(".rename-btn", el).disabled = count !== 1 || hasLocalRoot || (pane.mode === "desktop" && access && !access.can_rename);
+  $(".mkdir-btn", el).disabled = pane.mode === "desktop" ? (!pane.localRootId || (access && !access.can_write)) : false;
 
   const other = state.panes[side === "left" ? "right" : "left"];
-  const destinationReady = other.mode === "browser" ? Boolean(other.localRoot) : Boolean(other.connectionId);
-  const blocked = count === 0 || hasLocalRoot || selected.some(function (item) { return item.isDir; }) || !destinationReady;
+  const destinationReady = other.mode === "desktop" ? Boolean(other.localRootId) : Boolean(other.connectionId);
+  const destinationAccess = other.mode === "desktop" && other.localRootId ? desktopRootById(other.localRootId) : null;
+  const blocked = count === 0 || hasLocalRoot || selected.some(function (item) { return item.isDir; }) ||
+    !destinationReady || (other.mode === "desktop" && destinationAccess && !destinationAccess.can_write);
   $(".copy-to-other", el).disabled = blocked;
   const centerButton = side === "left" ? $("#copyLeftToRight") : $("#copyRightToLeft");
   if (centerButton) centerButton.disabled = blocked;
@@ -819,6 +825,8 @@ function wirePanes() {
       if (e.target.value === "remote") {
         pane.mode = "remote";
         pane.path = "/";
+        pane.localRootId = "";
+        pane.localRootName = "";
         renderServerSelects();
         await loadPane(side);
       } else {
@@ -831,36 +839,49 @@ function wirePanes() {
     });
 
     $(".local-location-select", el).addEventListener("change", async function (e) {
-      if (e.target.value === "__add__") {
-        await addLocalLocation(side);
-      } else if (e.target.value === "__thispc__") {
-        await showLocalComputer(side);
-      } else if (e.target.value) {
-        await selectLocalLocation(side, e.target.value);
-      }
+      if (e.target.value === "__thispc__") await showLocalComputer(side);
+      else if (e.target.value) await selectDesktopRoot(side, e.target.value);
     });
 
-    $(".add-location-btn", el).addEventListener("click", function () { addLocalLocation(side); });
-
-    $(".pane-refresh", el).addEventListener("click", function () { loadPane(side); });
+    $(".pane-refresh", el).addEventListener("click", async function () {
+      if (state.panes[side].mode === "desktop") {
+        try { await refreshDesktopAccess(); } catch (_) {}
+      }
+      loadPane(side);
+    });
     $(".home-btn", el).addEventListener("click", function () {
-      if (state.panes[side].mode === "browser") showLocalComputer(side);
+      if (state.panes[side].mode === "desktop") showLocalComputer(side);
       else {
         state.panes[side].path = "/";
         loadPane(side);
       }
     });
     $(".go-btn", el).addEventListener("click", function () {
-      state.panes[side].path = normalizePath($(".path-input", el).value);
-      loadPane(side);
+      const pane = state.panes[side];
+      if (pane.mode === "desktop") {
+        const value = $(".path-input", el).value.trim();
+        if (value && value !== "This PC") {
+          pane.path = value;
+          loadPane(side);
+        }
+      } else {
+        pane.path = normalizePath($(".path-input", el).value);
+        loadPane(side);
+      }
     });
     $(".path-input", el).addEventListener("keydown", function (e) {
       if (e.key === "Enter") $(".go-btn", el).click();
     });
     $(".up-btn", el).addEventListener("click", function () {
       const pane = state.panes[side];
-      if (pane.mode === "browser" && pane.localRoot && pane.path === "/") showLocalComputer(side);
-      else {
+      if (pane.mode === "desktop") {
+        const root = desktopRootById(pane.localRootId);
+        if (!root || desktopSamePath(pane.path, root.path)) showLocalComputer(side);
+        else {
+          pane.path = desktopParent(pane.path, root.path);
+          loadPane(side);
+        }
+      } else {
         pane.path = parentPath(pane.path);
         loadPane(side);
       }
@@ -869,6 +890,7 @@ function wirePanes() {
     $(".upload-btn", el).addEventListener("click", function () {
       const pane = state.panes[side];
       if (pane.mode === "remote" && !pane.connectionId) return toast("Choose a session first.", "error");
+      if (pane.mode === "desktop" && !pane.localRootId) return toast("Open a local drive first.", "error");
       $(".upload-input", el).click();
     });
     $(".upload-input", el).addEventListener("change", function (e) {
