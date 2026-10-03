@@ -2,85 +2,85 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="csrf-token" content="{{.CSRF}}">
   <title>SimpleSCP</title>
   <link rel="stylesheet" href="/static/app.css?v={{.Version}}">
   <link rel="stylesheet" href="/static/production.css?v={{.Version}}">
 </head>
-<body class="commander-body">
-  <header class="window-bar">
-    <div class="window-title">
-      <div class="brand-mark small" aria-hidden="true"><span>⇄</span></div>
-      <strong>SimpleSCP</strong>
+<body class="simplescp-app">
+  <header class="appbar">
+    <div class="appbar-brand">
+      <div class="appmark" aria-hidden="true">⇄</div>
+      <div class="appname">
+        <strong>SimpleSCP</strong>
+        <span>Secure file transfer</span>
+      </div>
     </div>
-    <div id="status" class="status ready" role="status" aria-live="polite">
-      <span class="status-dot"></span><span>Ready</span>
+
+    <div class="session-toolbar">
+      <button id="newConnectionBtn" class="new-session" type="button">＋ New session</button>
+      <button id="refreshConnections" class="icon-action" type="button" title="Refresh sessions" aria-label="Refresh sessions">↻</button>
+      <div id="connectionsList" class="connections-list" aria-label="Saved sessions"></div>
     </div>
-    <div class="window-actions">
-      {{if .IsAdmin}}<button id="updateBtn" class="toolbar-button update-button" type="button">Update · {{.Version}}</button>{{end}}
+
+    <div class="appbar-right">
+      <div id="status" class="status ready" role="status" aria-live="polite">
+        <span class="status-dot"></span><span>Ready</span>
+      </div>
+      {{if .IsAdmin}}<button id="updateBtn" class="update-button" type="button">{{.Version}}</button>{{end}}
       <span class="signed-user">{{.Username}}</span>
-      <button id="logoutBtn" class="toolbar-button" type="button">Sign out</button>
+      <button id="logoutBtn" class="signout-button" type="button">Sign out</button>
     </div>
   </header>
 
-  <nav class="menu-bar" aria-label="Application toolbar">
-    <div class="menu-group">
-      <button id="newConnectionBtn" class="menu-primary" type="button"><span aria-hidden="true">＋</span> New session</button>
-      <button id="refreshConnections" type="button"><span aria-hidden="true">↻</span> Refresh</button>
-    </div>
-    <span class="menu-spacer"></span>
-    <div class="menu-hint"><kbd>F5</kbd> Refresh <kbd>Ctrl+A</kbd> Select all <kbd>Shift</kbd> Range <kbd>Del</kbd> Delete</div>
-  </nav>
-
-  <section class="session-strip" aria-label="Saved sessions">
-    <div class="session-strip-label">
-      <span>Saved sessions</span>
-      <small>Open a connection in either pane</small>
-    </div>
-    <div id="connectionsList" class="connections-list"></div>
-  </section>
-
-  <main class="commander-shell">
+  <main class="workspace-shell">
     <section class="file-pane active-pane" data-pane="left" aria-label="Left file panel">
-      <div class="pane-caption">
-        <div class="pane-side"><span class="pane-letter">L</span><span class="pane-side-copy">Left pane</span></div>
-        <div class="pane-source-controls">
-        <select class="endpoint-type" aria-label="Left endpoint type">
-          <option value="remote">Remote server</option>
-          <option value="browser">Local computer</option>
-        </select>
-        <select class="server-select" aria-label="Left remote server"></select>
-        <select class="local-location-select hidden" aria-label="Left local location"></select>
-        <button class="add-location-btn hidden" type="button">Add location…</button>
-        <button class="pane-refresh toolbar-button icon-only" type="button" title="Refresh this pane" aria-label="Refresh this pane">↻</button>
+      <div class="pane-topline">
+        <div class="pane-identity">
+          <span class="pane-token">L</span>
+          <select class="endpoint-type" aria-label="Left endpoint type">
+            <option value="remote">Remote server</option>
+            <option value="browser">Local computer</option>
+          </select>
+        </div>
+        <div class="pane-endpoint">
+          <select class="server-select" aria-label="Left remote server"></select>
+          <select class="local-location-select hidden" aria-label="Left local location"></select>
+          <button class="add-location-btn hidden" type="button">＋ Add root</button>
+          <button class="pane-refresh icon-action" type="button" title="Refresh pane" aria-label="Refresh pane">↻</button>
         </div>
       </div>
 
-      <div class="pane-path-row">
-        <div class="path-nav">
-          <button class="up-btn toolbar-button icon-only" type="button" title="Parent folder" aria-label="Parent folder">↑</button>
-          <button class="home-btn toolbar-button icon-only" type="button" title="Root" aria-label="Root">⌂</button>
+      <div class="addressbar">
+        <div class="nav-buttons">
+          <button class="up-btn icon-action" type="button" title="Parent folder" aria-label="Parent folder">↑</button>
+          <button class="home-btn icon-action" type="button" title="Home" aria-label="Home">⌂</button>
         </div>
-        <span class="path-prefix">sftp:</span>
+        <span class="path-prefix">sftp</span>
         <input class="path-input" value="/" aria-label="Left path">
-        <button class="go-btn toolbar-button" type="button">Open</button>
+        <button class="go-btn path-open" type="button">Open</button>
       </div>
 
-      <div class="breadcrumbs"></div>
+      <div class="breadcrumbs" aria-label="Left path"></div>
 
-      <div class="file-actions">
-        <div class="file-actions-primary">
-          <button class="upload-btn toolbar-button" type="button">Upload</button>
+      <div class="pane-commandbar">
+        <div class="command-group primary-actions">
+          <button class="upload-btn" type="button">Upload</button>
           <input class="upload-input" type="file" multiple hidden>
-          <button class="mkdir-btn toolbar-button" type="button">New folder</button>
+          <button class="mkdir-btn" type="button">New folder</button>
         </div>
-        <div class="file-actions-secondary">
-          <button class="rename-btn toolbar-button" type="button" disabled>Rename</button>
-          <button class="download-btn toolbar-button" type="button" disabled>Download</button>
-          <button class="delete-btn toolbar-button danger-outline" type="button" disabled>Delete</button>
+        <div class="command-separator"></div>
+        <div class="command-group item-actions">
+          <button class="rename-btn" type="button" disabled>Rename</button>
+          <button class="download-btn" type="button" disabled>Download</button>
+          <button class="delete-btn danger-action" type="button" disabled>Delete</button>
         </div>
-        <div class="pane-search-wrap"><span aria-hidden="true">⌕</span><input class="pane-search" type="search" placeholder="Filter files"><span class="filter-count"></span></div>
+        <div class="file-filter">
+          <span aria-hidden="true">⌕</span>
+          <input class="pane-search" type="search" placeholder="Filter files">
+          <span class="filter-count"></span>
+        </div>
       </div>
 
       <div class="file-table-wrap">
@@ -90,57 +90,65 @@
         </table>
       </div>
 
-      <div class="pane-footer">
-        <span class="selection-text">Nothing selected</span>
-        <button class="copy-to-other transfer-button" type="button" disabled>Copy →</button>
+      <div class="pane-statusbar">
+        <span class="selection-text">0 selected</span>
+        <button class="copy-to-other transfer-button" type="button" disabled>Copy to right →</button>
       </div>
     </section>
 
-    <div class="commander-divider" aria-label="Transfer controls">
-      <span class="divider-label">TRANSFER</span>
-      <button id="copyLeftToRight" type="button" title="Copy left selection to right" aria-label="Copy left selection to right"><span>→</span><small>Copy</small></button>
-      <button id="copyRightToLeft" type="button" title="Copy right selection to left" aria-label="Copy right selection to left"><span>←</span><small>Copy</small></button>
-    </div>
+    <aside class="transfer-rail" aria-label="Transfer controls">
+      <div class="transfer-line"></div>
+      <button id="copyLeftToRight" type="button" disabled title="Copy left selection to right" aria-label="Copy left selection to right">→</button>
+      <button id="copyRightToLeft" type="button" disabled title="Copy right selection to left" aria-label="Copy right selection to left">←</button>
+      <div class="transfer-line"></div>
+    </aside>
 
     <section class="file-pane" data-pane="right" aria-label="Right file panel">
-      <div class="pane-caption">
-        <div class="pane-side"><span class="pane-letter">R</span><span class="pane-side-copy">Right pane</span></div>
-        <div class="pane-source-controls">
-        <select class="endpoint-type" aria-label="Right endpoint type">
-          <option value="remote">Remote server</option>
-          <option value="browser">Local computer</option>
-        </select>
-        <select class="server-select" aria-label="Right remote server"></select>
-        <select class="local-location-select hidden" aria-label="Right local location"></select>
-        <button class="add-location-btn hidden" type="button">Add location…</button>
-        <button class="pane-refresh toolbar-button icon-only" type="button" title="Refresh this pane" aria-label="Refresh this pane">↻</button>
+      <div class="pane-topline">
+        <div class="pane-identity">
+          <span class="pane-token">R</span>
+          <select class="endpoint-type" aria-label="Right endpoint type">
+            <option value="remote">Remote server</option>
+            <option value="browser">Local computer</option>
+          </select>
+        </div>
+        <div class="pane-endpoint">
+          <select class="server-select" aria-label="Right remote server"></select>
+          <select class="local-location-select hidden" aria-label="Right local location"></select>
+          <button class="add-location-btn hidden" type="button">＋ Add root</button>
+          <button class="pane-refresh icon-action" type="button" title="Refresh pane" aria-label="Refresh pane">↻</button>
         </div>
       </div>
 
-      <div class="pane-path-row">
-        <div class="path-nav">
-          <button class="up-btn toolbar-button icon-only" type="button" title="Parent folder" aria-label="Parent folder">↑</button>
-          <button class="home-btn toolbar-button icon-only" type="button" title="Root" aria-label="Root">⌂</button>
+      <div class="addressbar">
+        <div class="nav-buttons">
+          <button class="up-btn icon-action" type="button" title="Parent folder" aria-label="Parent folder">↑</button>
+          <button class="home-btn icon-action" type="button" title="Home" aria-label="Home">⌂</button>
         </div>
-        <span class="path-prefix">sftp:</span>
+        <span class="path-prefix">sftp</span>
         <input class="path-input" value="/" aria-label="Right path">
-        <button class="go-btn toolbar-button" type="button">Open</button>
+        <button class="go-btn path-open" type="button">Open</button>
       </div>
 
-      <div class="breadcrumbs"></div>
+      <div class="breadcrumbs" aria-label="Right path"></div>
 
-      <div class="file-actions">
-        <div class="file-actions-primary">
-          <button class="upload-btn toolbar-button" type="button">Upload</button>
+      <div class="pane-commandbar">
+        <div class="command-group primary-actions">
+          <button class="upload-btn" type="button">Upload</button>
           <input class="upload-input" type="file" multiple hidden>
-          <button class="mkdir-btn toolbar-button" type="button">New folder</button>
+          <button class="mkdir-btn" type="button">New folder</button>
         </div>
-        <div class="file-actions-secondary">
-          <button class="rename-btn toolbar-button" type="button" disabled>Rename</button>
-          <button class="download-btn toolbar-button" type="button" disabled>Download</button>
-          <button class="delete-btn toolbar-button danger-outline" type="button" disabled>Delete</button>
+        <div class="command-separator"></div>
+        <div class="command-group item-actions">
+          <button class="rename-btn" type="button" disabled>Rename</button>
+          <button class="download-btn" type="button" disabled>Download</button>
+          <button class="delete-btn danger-action" type="button" disabled>Delete</button>
         </div>
-        <div class="pane-search-wrap"><span aria-hidden="true">⌕</span><input class="pane-search" type="search" placeholder="Filter files"><span class="filter-count"></span></div>
+        <div class="file-filter">
+          <span aria-hidden="true">⌕</span>
+          <input class="pane-search" type="search" placeholder="Filter files">
+          <span class="filter-count"></span>
+        </div>
       </div>
 
       <div class="file-table-wrap">
@@ -150,23 +158,27 @@
         </table>
       </div>
 
-      <div class="pane-footer">
-        <button class="copy-to-other transfer-button" type="button" disabled>← Copy</button>
-        <span class="selection-text">Nothing selected</span>
+      <div class="pane-statusbar reverse">
+        <button class="copy-to-other transfer-button" type="button" disabled>← Copy to left</button>
+        <span class="selection-text">0 selected</span>
       </div>
     </section>
   </main>
 
-  <footer class="commander-status">
-    <span id="localLocationStatus">Local locations are stored in this browser</span>
-    <span class="status-separator"></span>
+  <footer class="app-footer">
+    <span id="localLocationStatus">Local roots are stored in this browser</span>
+    <span class="footer-spacer"></span>
     <span>SimpleSCP {{.Version}}</span>
   </footer>
 
   {{if .IsAdmin}}
   <dialog id="updateDialog" class="update-dialog">
     <div class="dialog-head">
-      <div><span class="eyebrow">UPDATER</span><h2>SimpleSCP update</h2><p>Verified updates are stored in /data and activated inside this container.</p></div>
+      <div>
+        <span class="eyebrow">UPDATES</span>
+        <h2>SimpleSCP update</h2>
+        <p>Verified Live releases are stored in /data and activated in this container.</p>
+      </div>
       <button type="button" class="icon-btn update-close" aria-label="Close">×</button>
     </div>
     <div class="update-status-grid">
@@ -175,7 +187,7 @@
       <div><span>Architecture</span><strong id="updateArch">—</strong></div>
       <div><span>Status</span><strong id="updateState">Not checked</strong></div>
     </div>
-    <div id="updateMessage" class="update-message">Open this panel to check for a verified update.</div>
+    <div id="updateMessage" class="update-message">Checking Live releases.</div>
     <div class="dialog-actions">
       <button id="rollbackUpdateBtn" type="button" class="ghost" disabled>Rollback</button>
       <button type="button" class="ghost update-close">Close</button>
@@ -188,7 +200,11 @@
     <form id="connectionForm" method="dialog">
       <input type="hidden" name="id">
       <div class="dialog-head">
-        <div><span class="eyebrow">SESSION</span><h2 id="connectionDialogTitle">New connection</h2><p>Save an SSH/SFTP session.</p></div>
+        <div>
+          <span class="eyebrow">SESSION</span>
+          <h2 id="connectionDialogTitle">New connection</h2>
+          <p>Save an SSH/SFTP endpoint.</p>
+        </div>
         <button type="button" class="icon-btn close-dialog" aria-label="Close">×</button>
       </div>
       <div class="form-grid">
@@ -223,7 +239,9 @@
   </dialog>
 
   <dialog id="trustDialog" class="trust-dialog">
-    <div class="dialog-head"><div><span class="eyebrow">SSH HOST KEY</span><h2>Verify server fingerprint</h2><p>Compare this fingerprint with the server before accepting it.</p></div></div>
+    <div class="dialog-head">
+      <div><span class="eyebrow">SSH HOST KEY</span><h2>Verify server fingerprint</h2><p>Compare this fingerprint with the server before accepting it.</p></div>
+    </div>
     <div class="fingerprint-box"><span>SHA-256 fingerprint</span><code id="trustFingerprint"></code></div>
     <div class="trust-warning">SimpleSCP will pin this exact key.</div>
     <div class="dialog-actions"><button id="cancelTrust" class="ghost">Cancel</button><button id="confirmTrust" class="primary">Trust fingerprint</button></div>
@@ -231,11 +249,11 @@
 
   <section id="activityDrawer" class="activity-drawer collapsed" aria-label="Transfer queue">
     <button id="activityToggle" class="activity-handle" type="button" aria-expanded="false">
-      <span class="activity-handle-left"><span class="activity-pulse"></span><strong>Transfer queue</strong><span id="activitySummary">No recent transfers</span></span>
+      <span class="activity-handle-left"><span class="activity-pulse"></span><strong>Transfers</strong><span id="activitySummary">No recent transfers</span></span>
       <span class="activity-chevron">⌃</span>
     </button>
     <div class="activity-body">
-      <div class="activity-head"><div><span class="eyebrow">TRANSFERS</span><h3>Transfer queue</h3></div><button id="clearActivity" class="ghost">Clear completed</button></div>
+      <div class="activity-head"><div><span class="eyebrow">TRANSFER ACTIVITY</span><h3>Transfers</h3></div><button id="clearActivity" class="ghost">Clear completed</button></div>
       <div id="activityList" class="activity-list"><div class="activity-empty">Transfers will appear here.</div></div>
     </div>
   </section>
