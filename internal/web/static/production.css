@@ -113,7 +113,6 @@ button{cursor:pointer}
 }
 .file-pane.active-pane{outline:2px solid #2e69ad;outline-offset:-2px}
 .file-pane.local-pane .pane-caption{background:#e7f2ec}
-.file-pane.bridge-pane .pane-letter{background:#32784d}
 .pane-caption{
   display:flex;align-items:center;gap:5px;padding:4px 5px;
   background:#e9edf1;border-bottom:1px solid #b9c0c7
@@ -127,8 +126,8 @@ button{cursor:pointer}
 }
 .endpoint-type{width:118px}
 .server-select{flex:1;min-width:80px}
-.local-drive-select{flex:1;min-width:80px}
-.local-pair-btn{
+.local-location-select{flex:1;min-width:80px}
+.add-location-btn{
   height:23px;padding:1px 6px;border:1px solid #9fa7af;background:#fff;border-radius:1px
 }
 
@@ -348,6 +347,15 @@ label small{color:#777f86;font-size:10px}
   .menu-hint{display:none}
   .pane-caption{flex-wrap:wrap}
   .endpoint-type{width:105px}
-  .server-select,.local-drive-select{min-width:130px}
+  .server-select,.local-location-select{min-width:130px}
   .auth-shell{grid-template-columns:1fr}.auth-brand{display:none}.auth-form-side{min-height:100vh}
 }
+
+/* Zero-install local computer locations */
+.file-pane.local-pane .pane-caption{background:#e7f2ec}
+.file-pane.local-pane .pane-letter{background:#32784d}
+.local-location-select{flex:1;min-width:100px}
+.add-location-btn{
+  height:23px;padding:1px 7px;border:1px solid #9fa7af;background:#fff;border-radius:1px;white-space:nowrap
+}
+.add-location-btn:hover{background:#f6fbf8;border-color:#6f9c82}
