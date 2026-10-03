@@ -92,11 +92,7 @@ Set `SIMPLE_SCP_VERSION` in `.env` if you want to pin a specific release instead
 
 ## Production HTTPS
 
-For anything exposed beyond a trusted local network, put SimpleSCP behind an HTTPS reverse proxy and set:
-
-```dotenv
-SIMPLE_SCP_COOKIE_SECURE=true
-```
+For anything exposed beyond a trusted local network, put SimpleSCP behind an HTTPS reverse proxy. Then open **Settings** in the SimpleSCP Server UI and enable **Require HTTPS-only session cookies**.
 
 When secure cookies are enabled, SimpleSCP also sends HSTS.
 
@@ -113,30 +109,27 @@ SIMPLE_SCP_MASTER_KEY_FILE=/run/secrets/simplescp_master_key
 SIMPLE_SCP_ADMIN_PASSWORD_FILE=/run/secrets/simplescp_admin_password
 ```
 
-If `SIMPLE_SCP_ADMIN_PASSWORD` is present, SimpleSCP keeps the configured administrator account synchronized with that password on startup. This makes container redeploys deterministic even when the persistent database volume already exists. Remove the variable after bootstrap if you do not want startup-time password synchronization.
+The administrator username/password variables are **first-boot bootstrap values only**. Once the database contains a user, Docker environment values never overwrite application credentials.
 
 Back up the exact master key separately from the database.
 
 ## Configuration
+
+Docker/environment configuration is intentionally limited to bootstrap and container-runtime values. Operational application settings live in the **Settings** page and are persisted in SQLite.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SIMPLE_SCP_VERSION` | `latest` | Container image tag used by Compose |
 | `SIMPLE_SCP_PORT` | `8080` | Host port published by Compose |
 | `SIMPLE_SCP_LISTEN` | `:8080` | Internal HTTP listen address |
-| `SIMPLE_SCP_DATA_DIR` | `/data` | Persistent application data |
+| `SIMPLE_SCP_DATA_DIR` | `/data` | Persistent application data path |
 | `SIMPLE_SCP_MASTER_KEY` | required | Base64-encoded 32-byte credential encryption key |
 | `SIMPLE_SCP_MASTER_KEY_FILE` | empty | Mounted-file alternative for the master key |
-| `SIMPLE_SCP_ADMIN_USER` | `admin` | Initial administrator username |
-| `SIMPLE_SCP_ADMIN_PASSWORD` | first boot required | Initial administrator password; when present, synchronizes the configured admin credential at startup |
-| `SIMPLE_SCP_ADMIN_PASSWORD_FILE` | empty | Mounted-file alternative for the initial password |
-| `SIMPLE_SCP_COOKIE_SECURE` | `false` | Require HTTPS-only session cookies |
-| `SIMPLE_SCP_SESSION_TTL` | `24h` | Session lifetime |
-| `SIMPLE_SCP_SSH_TIMEOUT` | `15s` | SSH connection timeout |
-| `SIMPLE_SCP_MAX_UPLOAD_BYTES` | `10737418240` | Maximum HTTP upload body size |
-| `SIMPLE_SCP_MAX_CONCURRENT_TRANSFERS` | `4` | Concurrent transfer limit |
-| `SIMPLE_SCP_LOGIN_MAX_ATTEMPTS` | `5` | Login attempts allowed per username/IP window |
-| `SIMPLE_SCP_LOGIN_WINDOW` | `15m` | Login throttling window |
+| `SIMPLE_SCP_ADMIN_USER` | `admin` | First-boot administrator username |
+| `SIMPLE_SCP_ADMIN_PASSWORD` | first boot required | First-boot administrator password |
+| `SIMPLE_SCP_ADMIN_PASSWORD_FILE` | empty | Mounted-file alternative for the first-boot password |
+
+The Server **Settings** UI manages HTTPS-only cookies, session lifetime, SSH timeout, upload limits, transfer concurrency, and login throttling. Changes are stored in the database and applied without editing Compose.
 
 ## SSH host verification
 
@@ -196,23 +189,13 @@ docker build -t simplescp:dev .
 ```
 
 
-## Automatic updates
+## Updates
 
-SimpleSCP can update itself from GitHub without rebuilding the Docker container.
+SimpleSCP updates are **manual-only by design**.
 
-By default, `SIMPLE_SCP_AUTO_UPDATE=true`. Source/main builds follow the automatically published `edge` release generated from the latest successful `main` workflow. Tagged production builds follow the latest stable GitHub release.
+The Server can check the latest published Live release in the updater dialog, verify the published SHA-256 checksum, stage the selected binary under `/data/update/`, and preserve a rollback binary. It does **not** poll for, download, install, or restart onto updates in the background.
 
-The running container checks for updates every 15 minutes by default, verifies the published SHA-256 checksum, stages the new executable under `/data/update/`, and gracefully restarts. The immutable container launcher automatically starts the updated executable from the persistent `/data` volume.
-
-Configuration:
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `SIMPLE_SCP_AUTO_UPDATE` | `true` | Automatically check, verify, install, and restart onto GitHub-published updates |
-| `SIMPLE_SCP_AUTO_UPDATE_INTERVAL` | `15m` | Update polling interval (minimum 5 minutes) |
-
-This updater does not require the Docker socket, Watchtower, a sidecar, or a second Docker container.
-
+An administrator must explicitly open the updater and press **Install update**. There is no automatic-update setting or hidden schedule.
 
 ## SimpleSCP Desktop
 
