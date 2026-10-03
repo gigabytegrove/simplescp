@@ -1,8 +1,11 @@
 package main
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -52,6 +55,21 @@ type entryInfo struct {
 	IsDir   bool      `json:"is_dir"`
 	Size    int64     `json:"size"`
 	ModTime time.Time `json:"mod_time"`
+}
+
+type accessRoot struct {
+	Path      string `json:"path"`
+	CanRead   bool   `json:"can_read"`
+	CanWrite  bool   `json:"can_write"`
+	CanRename bool   `json:"can_rename"`
+	CanDelete bool   `json:"can_delete"`
+}
+
+type accessTicket struct {
+	DeviceID int64        `json:"device_id"`
+	UserID   int64        `json:"user_id"`
+	Expires  int64        `json:"expires"`
+	Roots    []accessRoot `json:"roots"`
 }
 
 type desktopApp struct {
@@ -443,6 +461,62 @@ func (a *desktopApp) sendHeartbeat() error {
 	return nil
 }
 
+func (a *desktopApp) verifyAccessTicket(r *http.Request) (accessTicket, error) {
+	var ticket accessTicket
+	token := strings.TrimSpace(r.Header.Get("X-SimpleSCP-Access"))
+	parts := strings.Split(token, ".")
+	if len(parts) != 2 {
+		return ticket, errors.New("desktop access token required")
+	}
+	a.mu.RLock()
+	secret := a.cfg.Secret
+	a.mu.RUnlock()
+
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(parts[0]))
+	expected := mac.Sum(nil)
+	actual, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil || !hmac.Equal(expected, actual) {
+		return ticket, errors.New("invalid desktop access token")
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil { return ticket, errors.New("invalid desktop access token") }
+	if err := json.Unmarshal(raw, &ticket); err != nil { return ticket, errors.New("invalid desktop access token") }
+	if ticket.Expires <= time.Now().UTC().Unix() {
+		return ticket, errors.New("desktop access token expired")
+	}
+	return ticket, nil
+}
+
+func pathWithinRoot(path, root string) bool {
+	path = filepath.Clean(path)
+	root = filepath.Clean(root)
+	rel, err := filepath.Rel(root, path)
+	if err != nil { return false }
+	if rel == "." { return true }
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) { return false }
+	return true
+}
+
+func (a *desktopApp) authorizePath(r *http.Request, path, permission string) error {
+	ticket, err := a.verifyAccessTicket(r)
+	if err != nil { return err }
+	for _, root := range ticket.Roots {
+		if !pathWithinRoot(path, root.Path) { continue }
+		switch permission {
+		case "read":
+			if root.CanRead { return nil }
+		case "write":
+			if root.CanWrite { return nil }
+		case "rename":
+			if root.CanRename { return nil }
+		case "delete":
+			if root.CanDelete { return nil }
+		}
+	}
+	return errors.New("access denied by SimpleSCP Server policy")
+}
+
 func cleanAbsolutePath(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -459,6 +533,10 @@ func (a *desktopApp) handleList(w http.ResponseWriter, r *http.Request) {
 	path, err := cleanAbsolutePath(r.URL.Query().Get("path"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := a.authorizePath(r, path, "read"); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	items, err := os.ReadDir(path)
@@ -495,6 +573,10 @@ func (a *desktopApp) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := a.authorizePath(r, path, "read"); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -520,6 +602,10 @@ func (a *desktopApp) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	path, err := cleanAbsolutePath(r.URL.Query().Get("path"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := a.authorizePath(r, path, "write"); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -561,6 +647,10 @@ func (a *desktopApp) handleMkdir(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := a.authorizePath(r, path, "write"); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
 	if err := os.Mkdir(path, 0o755); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -587,6 +677,14 @@ func (a *desktopApp) handleRename(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := a.authorizePath(r, oldPath, "rename"); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
+	if err := a.authorizePath(r, newPath, "rename"); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
+		return
+	}
 	if isFilesystemRoot(oldPath) {
 		writeError(w, http.StatusForbidden, "cannot rename a filesystem root")
 		return
@@ -610,6 +708,10 @@ func (a *desktopApp) handleDelete(w http.ResponseWriter, r *http.Request) {
 	path, err := cleanAbsolutePath(input.Path)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := a.authorizePath(r, path, "delete"); err != nil {
+		writeError(w, http.StatusForbidden, err.Error())
 		return
 	}
 	if isFilesystemRoot(path) {
