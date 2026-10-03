@@ -115,6 +115,22 @@ async function desktopFetch(url, options) {
   return data;
 }
 
+async function desktopFileResponse(path) {
+  await ensureDesktopTicket();
+  const response = await fetch("/_desktop/file?path=" + encodeURIComponent(path), {
+    headers: { "X-SimpleSCP-Access": state.desktop.ticket }
+  });
+  if (!response.ok) {
+    let message = "Unable to read local file.";
+    try {
+      const data = await response.json();
+      if (data && data.error) message = data.error;
+    } catch (_) {}
+    throw new Error(message);
+  }
+  return response;
+}
+
 function desktopRootById(id) {
   return state.desktop.roots.find(function (root) { return Number(root.id) === Number(id); }) || null;
 }
@@ -925,16 +941,16 @@ async function uploadFiles(side, files) {
   if (!files.length) return;
   const pane = state.panes[side];
   setStatus("Copying " + files.length + " file" + (files.length === 1 ? "" : "s") + "…", "busy");
-  const activityId = addActivity("upload", pane.mode === "browser" ? "Local copy" : "Upload", files.length + " file" + (files.length === 1 ? "" : "s") + " to " + pane.path, "busy");
+  const activityId = addActivity("upload", pane.mode === "desktop" ? "Local copy" : "Upload", files.length + " file" + (files.length === 1 ? "" : "s") + " to " + pane.path, "busy");
   try {
-    if (pane.mode === "browser") {
-      if (!pane.localRoot) throw new Error("Choose a local location first.");
-      const dir = await localDirectoryForPath(pane, pane.path);
+    if (pane.mode === "desktop") {
+      if (!pane.localRootId) throw new Error("Open a local drive first.");
       for (const file of files) {
-        const dest = await dir.getFileHandle(file.name, { create:true });
-        const writable = await dest.createWritable();
-        await writable.write(file);
-        await writable.close();
+        await desktopFetch("/_desktop/file?path=" + encodeURIComponent(desktopJoin(pane.path, file.name)), {
+          method:"PUT",
+          headers:{ "Content-Type": file.type || "application/octet-stream" },
+          body:file
+        });
       }
     } else {
       const form = new FormData();
@@ -956,7 +972,7 @@ async function uploadFiles(side, files) {
 async function createFolder(side) {
   const pane = state.panes[side];
   if (pane.mode === "remote" && !pane.connectionId) return toast("Choose a server first.", "error");
-  if (pane.mode === "browser" && !pane.localRoot) return toast("Choose a local folder first.", "error");
+  if (pane.mode === "desktop" && !pane.localRootId) return toast("Open a local drive first.", "error");
 
   const name = await showActionDialog({
     eyebrow: "NEW FOLDER",
@@ -964,17 +980,16 @@ async function createFolder(side) {
     description: "Create a new folder in " + pane.path + ".",
     input: true,
     placeholder: "Folder name",
-    hint: "Folder names cannot contain /.",
+    hint: "Folder names cannot contain / or \\.",
     confirmLabel: "Create folder"
   });
   if (!name) return;
-  const cleanName = name.trim().replaceAll("/", "");
+  const cleanName = name.trim().replace(/[\\/]/g, "");
   if (!cleanName || cleanName === "." || cleanName === "..") return toast("Invalid folder name.", "error");
 
   try {
-    if (pane.mode === "browser") {
-      const dir = await localDirectoryForPath(pane, pane.path);
-      await dir.getDirectoryHandle(cleanName, { create:true });
+    if (pane.mode === "desktop") {
+      await desktopFetch("/_desktop/mkdir", { method:"POST", body:{ path:desktopJoin(pane.path, cleanName) } });
     } else {
       await withTrustRetry(side, function () {
         return api("/api/connections/" + pane.connectionId + "/mkdir", {
@@ -991,22 +1006,6 @@ async function createFolder(side) {
   }
 }
 
-async function copyLocalHandle(handle, destinationDir, destinationName) {
-  if (!handle) throw new Error("Local file handle is no longer available.");
-  if (handle.kind === "file") {
-    const src = await handle.getFile();
-    const destHandle = await destinationDir.getFileHandle(destinationName, { create:true });
-    const writable = await destHandle.createWritable();
-    await writable.write(src);
-    await writable.close();
-    return;
-  }
-  const destDir = await destinationDir.getDirectoryHandle(destinationName, { create:true });
-  for await (const [childName, child] of handle.entries()) {
-    await copyLocalHandle(child, destDir, childName);
-  }
-}
-
 async function renameSelected(side) {
   const pane = state.panes[side];
   const selected = pane.selected[0];
@@ -1017,23 +1016,19 @@ async function renameSelected(side) {
     description: "Choose a new name for " + selected.name + ".",
     input: true,
     value: selected.name,
-    hint: "Names cannot contain /.",
+    hint: "Names cannot contain / or \\.",
     confirmLabel: "Rename"
   });
   if (!nextName || nextName === selected.name) return;
-  const cleanName = nextName.trim().replaceAll("/", "");
+  const cleanName = nextName.trim().replace(/[\\/]/g, "");
   if (!cleanName || cleanName === "." || cleanName === "..") return toast("Invalid name.", "error");
 
   try {
-    if (pane.mode === "browser") {
-      const parent = await localDirectoryForPath(pane, pane.path);
-      const handle = selected.handle || pane.localHandles.get(selected.path);
-      if (handle && typeof handle.move === "function") {
-        await handle.move(parent, cleanName);
-      } else {
-        await copyLocalHandle(handle, parent, cleanName);
-        await parent.removeEntry(selected.name, { recursive:selected.isDir });
-      }
+    if (pane.mode === "desktop") {
+      await desktopFetch("/_desktop/rename", {
+        method:"POST",
+        body:{ old_path:selected.path, new_path:desktopJoin(pane.path, cleanName) }
+      });
     } else {
       await api("/api/connections/" + pane.connectionId + "/rename", {
         method: "POST",
@@ -1049,9 +1044,24 @@ async function renameSelected(side) {
   }
 }
 
-function downloadSelected(side) {
+async function downloadSelected(side) {
   const pane = state.panes[side];
-  if (pane.mode === "browser" || pane.selected.length !== 1 || pane.selected[0].isDir) return;
+  if (pane.selected.length !== 1 || pane.selected[0].isDir || pane.selected[0].localRootId) return;
+  if (pane.mode === "desktop") {
+    try {
+      const response = await desktopFileResponse(pane.selected[0].path);
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = pane.selected[0].name;
+      anchor.click();
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    } catch (err) {
+      toast(err.message, "error");
+    }
+    return;
+  }
   location.href = "/api/connections/" + pane.connectionId + "/download?path=" + encodeURIComponent(pane.selected[0].path);
 }
 
@@ -1060,7 +1070,7 @@ async function deleteSelected(side) {
   const selected = pane.selected.slice();
   if (!selected.length) return;
   const label = selected.length === 1 ? selected[0].name : selected.length + " selected items";
-  const locationLabel = pane.mode === "browser" ? "local computer" : "remote server";
+  const locationLabel = pane.mode === "desktop" ? "local computer" : "remote server";
   const confirmed = await showActionDialog({
     eyebrow: "DESTRUCTIVE ACTION",
     title: selected.length === 1 ? "Delete " + label + "?" : "Delete selected items?",
@@ -1074,10 +1084,9 @@ async function deleteSelected(side) {
   const activityId = addActivity("delete", "Delete", selected.length + " item" + (selected.length === 1 ? "" : "s") + " from " + pane.path, "busy");
   try {
     setStatus("Deleting " + selected.length + " item" + (selected.length === 1 ? "" : "s") + "…", "busy");
-    if (pane.mode === "browser") {
-      const dir = await localDirectoryForPath(pane, pane.path);
+    if (pane.mode === "desktop") {
       for (const item of selected) {
-        await dir.removeEntry(item.name, { recursive:item.isDir });
+        await desktopFetch("/_desktop/delete", { method:"POST", body:{ path:item.path, recursive:item.isDir } });
       }
     } else {
       for (const item of selected) {
