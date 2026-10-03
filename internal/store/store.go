@@ -105,6 +105,28 @@ type DesktopInventory struct {
 	FreeBytes  uint64 `json:"free_bytes,omitempty"`
 }
 
+type ServerSettings struct {
+	CookieSecure           bool  `json:"cookie_secure"`
+	SessionTTLSeconds      int64 `json:"session_ttl_seconds"`
+	SSHTimeoutSeconds      int64 `json:"ssh_timeout_seconds"`
+	MaxUploadBytes         int64 `json:"max_upload_bytes"`
+	MaxConcurrentTransfers int   `json:"max_concurrent_transfers"`
+	LoginMaxAttempts       int   `json:"login_max_attempts"`
+	LoginWindowSeconds     int64 `json:"login_window_seconds"`
+}
+
+func DefaultServerSettings() ServerSettings {
+	return ServerSettings{
+		CookieSecure:           false,
+		SessionTTLSeconds:      86400,
+		SSHTimeoutSeconds:      15,
+		MaxUploadBytes:         10737418240,
+		MaxConcurrentTransfers: 4,
+		LoginMaxAttempts:       5,
+		LoginWindowSeconds:     900,
+	}
+}
+
 type secretPayload struct {
 	Password   string `json:"password,omitempty"`
 	PrivateKey string `json:"private_key,omitempty"`
@@ -212,6 +234,19 @@ CREATE TABLE IF NOT EXISTS desktop_acl (
 	PRIMARY KEY(root_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_desktop_acl_user ON desktop_acl(user_id);
+
+CREATE TABLE IF NOT EXISTS server_settings (
+	id INTEGER PRIMARY KEY CHECK(id = 1),
+	cookie_secure INTEGER NOT NULL DEFAULT 0,
+	session_ttl_seconds INTEGER NOT NULL DEFAULT 86400,
+	ssh_timeout_seconds INTEGER NOT NULL DEFAULT 15,
+	max_upload_bytes INTEGER NOT NULL DEFAULT 10737418240,
+	max_concurrent_transfers INTEGER NOT NULL DEFAULT 4,
+	login_max_attempts INTEGER NOT NULL DEFAULT 5,
+	login_window_seconds INTEGER NOT NULL DEFAULT 900,
+	updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT OR IGNORE INTO server_settings(id) VALUES(1);
 `)
 	if err != nil {
 		return fmt.Errorf("migrate database: %w", err)
@@ -227,13 +262,13 @@ func (s *Store) BootstrapAdmin(username, password string) error {
 		return err
 	}
 
-	// If a password is explicitly configured, keep that administrator
-	// credential synchronized across container redeploys. Persistent Docker
-	// volumes otherwise preserve an old bootstrap password indefinitely.
+	// Bootstrap credentials are first-run only. Once users exist, the
+	// database is authoritative and Docker environment values never overwrite
+	// an administrator credential.
+	if count > 0 {
+		return nil
+	}
 	if strings.TrimSpace(password) == "" {
-		if count > 0 {
-			return nil
-		}
 		return errors.New("initial admin password is required on a fresh database")
 	}
 	if username == "" {
@@ -241,28 +276,6 @@ func (s *Store) BootstrapAdmin(username, password string) error {
 	}
 	if len(password) < 12 {
 		return errors.New("admin password must be at least 12 characters")
-	}
-
-	var id int64
-	var currentHash []byte
-	err := s.db.QueryRow("SELECT id,password_hash FROM users WHERE username = ? COLLATE NOCASE", username).Scan(&id, &currentHash)
-	if err == nil {
-		if bcrypt.CompareHashAndPassword(currentHash, []byte(password)) == nil {
-			_, err = s.db.Exec("UPDATE users SET is_admin=1 WHERE id=?", id)
-			return err
-		}
-		hash, hashErr := bcrypt.GenerateFromPassword([]byte(password), 12)
-		if hashErr != nil {
-			return fmt.Errorf("hash admin password: %w", hashErr)
-		}
-		_, err = s.db.Exec("UPDATE users SET password_hash=?,is_admin=1 WHERE id=?", hash, id)
-		if err != nil {
-			return fmt.Errorf("synchronize admin password: %w", err)
-		}
-		return nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return err
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(password), 12)
@@ -749,4 +762,69 @@ func (s *Store) EffectiveDesktopRoots(deviceID, userID int64) ([]DesktopRootAcce
 		}
 	}
 	return out,nil
+}
+
+
+func validateServerSettings(v ServerSettings) error {
+	if v.SessionTTLSeconds < 900 || v.SessionTTLSeconds > 30*24*60*60 {
+		return errors.New("session lifetime must be between 15 minutes and 30 days")
+	}
+	if v.SSHTimeoutSeconds < 1 || v.SSHTimeoutSeconds > 300 {
+		return errors.New("SSH timeout must be between 1 and 300 seconds")
+	}
+	if v.MaxUploadBytes < 1<<20 || v.MaxUploadBytes > 1<<40 {
+		return errors.New("maximum upload size must be between 1 MiB and 1 TiB")
+	}
+	if v.MaxConcurrentTransfers < 1 || v.MaxConcurrentTransfers > 64 {
+		return errors.New("concurrent transfer limit must be between 1 and 64")
+	}
+	if v.LoginMaxAttempts < 3 || v.LoginMaxAttempts > 100 {
+		return errors.New("login attempts must be between 3 and 100")
+	}
+	if v.LoginWindowSeconds < 60 || v.LoginWindowSeconds > 86400 {
+		return errors.New("login window must be between 1 minute and 24 hours")
+	}
+	return nil
+}
+
+func (s *Store) GetServerSettings() (ServerSettings, error) {
+	v := DefaultServerSettings()
+	var secure int
+	err := s.db.QueryRow(`
+SELECT cookie_secure,session_ttl_seconds,ssh_timeout_seconds,max_upload_bytes,
+       max_concurrent_transfers,login_max_attempts,login_window_seconds
+FROM server_settings WHERE id=1`).
+		Scan(&secure,&v.SessionTTLSeconds,&v.SSHTimeoutSeconds,&v.MaxUploadBytes,
+			&v.MaxConcurrentTransfers,&v.LoginMaxAttempts,&v.LoginWindowSeconds)
+	if errors.Is(err, sql.ErrNoRows) {
+		return v, nil
+	}
+	if err != nil {
+		return ServerSettings{}, err
+	}
+	v.CookieSecure = secure == 1
+	return v, validateServerSettings(v)
+}
+
+func (s *Store) SaveServerSettings(v ServerSettings) error {
+	if err := validateServerSettings(v); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`
+INSERT INTO server_settings(
+	id,cookie_secure,session_ttl_seconds,ssh_timeout_seconds,max_upload_bytes,
+	max_concurrent_transfers,login_max_attempts,login_window_seconds,updated_at
+) VALUES(1,?,?,?,?,?,?,?,CURRENT_TIMESTAMP)
+ON CONFLICT(id) DO UPDATE SET
+	cookie_secure=excluded.cookie_secure,
+	session_ttl_seconds=excluded.session_ttl_seconds,
+	ssh_timeout_seconds=excluded.ssh_timeout_seconds,
+	max_upload_bytes=excluded.max_upload_bytes,
+	max_concurrent_transfers=excluded.max_concurrent_transfers,
+	login_max_attempts=excluded.login_max_attempts,
+	login_window_seconds=excluded.login_window_seconds,
+	updated_at=CURRENT_TIMESTAMP`,
+		boolInt(v.CookieSecure),v.SessionTTLSeconds,v.SSHTimeoutSeconds,v.MaxUploadBytes,
+		v.MaxConcurrentTransfers,v.LoginMaxAttempts,v.LoginWindowSeconds)
+	return err
 }
