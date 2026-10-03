@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 )
 
 type Config struct {
@@ -17,21 +15,12 @@ type Config struct {
 	MasterKey     []byte
 	AdminUser     string
 	AdminPassword string
-	CookieSecure  bool
-	SessionTTL    time.Duration
-	SSHTimeout             time.Duration
-	MaxUploadBytes         int64
-	MaxConcurrentTransfers int
-	LoginMaxAttempts       int
-	LoginWindow            time.Duration
-	AutoUpdate             bool
-	AutoUpdateInterval     time.Duration
 }
 
 func Load() (Config, error) {
 	cfg := Config{
-		Listen:        env("SIMPLE_SCP_LISTEN", ":8080"),
-		DataDir:       env("SIMPLE_SCP_DATA_DIR", "/data"),
+		Listen:    env("SIMPLE_SCP_LISTEN", ":8080"),
+		DataDir:   env("SIMPLE_SCP_DATA_DIR", "/data"),
 		AdminUser: env("SIMPLE_SCP_ADMIN_USER", "admin"),
 	}
 
@@ -54,45 +43,6 @@ func Load() (Config, error) {
 		return Config{}, errors.New("SIMPLE_SCP_MASTER_KEY must be a base64-encoded 32-byte key")
 	}
 	cfg.MasterKey = key
-
-	cfg.CookieSecure, err = strconv.ParseBool(env("SIMPLE_SCP_COOKIE_SECURE", "false"))
-	if err != nil {
-		return Config{}, fmt.Errorf("invalid SIMPLE_SCP_COOKIE_SECURE: %w", err)
-	}
-	cfg.SessionTTL, err = time.ParseDuration(env("SIMPLE_SCP_SESSION_TTL", "24h"))
-	if err != nil || cfg.SessionTTL < 15*time.Minute {
-		return Config{}, errors.New("SIMPLE_SCP_SESSION_TTL must be a valid duration of at least 15m")
-	}
-	cfg.SSHTimeout, err = time.ParseDuration(env("SIMPLE_SCP_SSH_TIMEOUT", "15s"))
-	if err != nil || cfg.SSHTimeout < time.Second {
-		return Config{}, errors.New("SIMPLE_SCP_SSH_TIMEOUT must be a valid duration of at least 1s")
-	}
-
-	cfg.MaxUploadBytes, err = strconv.ParseInt(env("SIMPLE_SCP_MAX_UPLOAD_BYTES", "10737418240"), 10, 64)
-	if err != nil || cfg.MaxUploadBytes < 1<<20 {
-		return Config{}, errors.New("SIMPLE_SCP_MAX_UPLOAD_BYTES must be an integer of at least 1048576")
-	}
-	cfg.MaxConcurrentTransfers, err = strconv.Atoi(env("SIMPLE_SCP_MAX_CONCURRENT_TRANSFERS", "4"))
-	if err != nil || cfg.MaxConcurrentTransfers < 1 || cfg.MaxConcurrentTransfers > 64 {
-		return Config{}, errors.New("SIMPLE_SCP_MAX_CONCURRENT_TRANSFERS must be between 1 and 64")
-	}
-	cfg.LoginMaxAttempts, err = strconv.Atoi(env("SIMPLE_SCP_LOGIN_MAX_ATTEMPTS", "5"))
-	if err != nil || cfg.LoginMaxAttempts < 3 || cfg.LoginMaxAttempts > 100 {
-		return Config{}, errors.New("SIMPLE_SCP_LOGIN_MAX_ATTEMPTS must be between 3 and 100")
-	}
-	cfg.LoginWindow, err = time.ParseDuration(env("SIMPLE_SCP_LOGIN_WINDOW", "15m"))
-	if err != nil || cfg.LoginWindow < time.Minute || cfg.LoginWindow > 24*time.Hour {
-		return Config{}, errors.New("SIMPLE_SCP_LOGIN_WINDOW must be between 1m and 24h")
-	}
-
-	cfg.AutoUpdate, err = strconv.ParseBool(env("SIMPLE_SCP_AUTO_UPDATE", "true"))
-	if err != nil {
-		return Config{}, fmt.Errorf("invalid SIMPLE_SCP_AUTO_UPDATE: %w", err)
-	}
-	cfg.AutoUpdateInterval, err = time.ParseDuration(env("SIMPLE_SCP_AUTO_UPDATE_INTERVAL", "15m"))
-	if err != nil || cfg.AutoUpdateInterval < 5*time.Minute || cfg.AutoUpdateInterval > 24*time.Hour {
-		return Config{}, errors.New("SIMPLE_SCP_AUTO_UPDATE_INTERVAL must be between 5m and 24h")
-	}
 
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return Config{}, fmt.Errorf("create data directory: %w", err)
