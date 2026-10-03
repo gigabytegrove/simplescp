@@ -274,7 +274,7 @@ func (a *app) loginPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type","text/html; charset=utf-8")
-	_ = a.templates.ExecuteTemplate(w,"login.html",map[string]any{"CSRF":token})
+	_ = a.templates.ExecuteTemplate(w,"login.html",map[string]any{"CSRF":token,"Version":buildinfo.Version})
 }
 
 func (a *app) login(w http.ResponseWriter, r *http.Request) {
@@ -296,6 +296,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		_ = a.templates.ExecuteTemplate(w,"login.html",map[string]any{
 			"Error":"Your sign-in form expired. Please try again.",
 			"CSRF":token,
+			"Version":buildinfo.Version,
 		})
 		return
 	}
@@ -316,6 +317,7 @@ func (a *app) login(w http.ResponseWriter, r *http.Request) {
 		_ = a.templates.ExecuteTemplate(w,"login.html",map[string]any{
 			"Error":"Invalid username or password.",
 			"CSRF":loginToken,
+			"Version":buildinfo.Version,
 		})
 		return
 	}
