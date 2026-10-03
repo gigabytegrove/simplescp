@@ -10,10 +10,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/gigabytegrove/simplescp/internal/buildinfo"
 	"github.com/gigabytegrove/simplescp/internal/config"
 	"github.com/gigabytegrove/simplescp/internal/store"
-	"github.com/gigabytegrove/simplescp/internal/updater"
 	"github.com/gigabytegrove/simplescp/internal/vault"
 	webapp "github.com/gigabytegrove/simplescp/internal/web"
 )
@@ -27,9 +25,6 @@ func main() {
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	slog.SetDefault(logger)
-	if !cfg.CookieSecure {
-		logger.Warn("secure cookies are disabled; do not expose SimpleSCP over an untrusted network without TLS")
-	}
 
 	v, err := vault.New(cfg.MasterKey)
 	if err != nil {
@@ -74,63 +69,10 @@ func main() {
 		}
 	}()
 
-	if cfg.AutoUpdate {
-		updateManager := updater.New(cfg.DataDir)
-		go func() {
-			initialDelay := time.NewTimer(45 * time.Second)
-			defer initialDelay.Stop()
-
-			select {
-			case <-initialDelay.C:
-			}
-
-			ticker := time.NewTicker(cfg.AutoUpdateInterval)
-			defer ticker.Stop()
-
-			check := func() bool {
-				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-				defer cancel()
-
-				status, err := updateManager.Status(ctx, buildinfo.Version, buildinfo.Commit, buildinfo.BuildTime)
-				if err != nil {
-					logger.Warn("automatic update check failed", "error", err)
-					return false
-				}
-				if !status.UpdateAvailable {
-					logger.Info("automatic update check complete", "current", buildinfo.Version, "latest", status.Latest)
-					return false
-				}
-
-				result, err := updateManager.Install(ctx, buildinfo.Version)
-				if err != nil {
-					logger.Error("automatic update failed", "error", err)
-					return false
-				}
-
-				logger.Info("automatic update installed; restarting", "version", result.Version, "sha256", result.SHA256)
-				proc, err := os.FindProcess(os.Getpid())
-				if err != nil {
-					logger.Error("automatic update restart failed", "error", err)
-					return false
-				}
-				if err := proc.Signal(syscall.SIGTERM); err != nil {
-					logger.Error("automatic update restart signal failed", "error", err)
-					return false
-				}
-				return true
-			}
-
-			if check() {
-				return
-			}
-			for range ticker.C {
-				if check() {
-					return
-				}
-			}
-		}()
-		logger.Info("automatic updates enabled", "interval", cfg.AutoUpdateInterval.String())
-	}
+	// Updates are always manual. SimpleSCP never checks, installs, or restarts
+	// itself in the background. An administrator must explicitly use the
+	// updater UI to install a published release.
+	logger.Info("automatic updates disabled by design; updates require explicit administrator action")
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
