@@ -12,7 +12,14 @@ const state = {
   selectionAnchor: { left: null, right: null },
   activity: [],
   actionResolver: null,
-  localLocations: []
+  desktop: {
+    available: false,
+    info: null,
+    device: null,
+    roots: [],
+    ticket: "",
+    expires: 0
+  }
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -24,203 +31,162 @@ function makePaneState() {
     connectionId: 0,
     path: "/",
     selected: [],
-    localRoot: null,
     localRootId: "",
-    localRootName: "",
-    localHandles: new Map(),
-    localVirtualRoot: false
+    localRootName: ""
   };
-}
-
-function localDeckSupported() {
-  return window.isSecureContext && typeof window.showDirectoryPicker === "function" && "indexedDB" in window;
-}
-
-function openLocalDB() {
-  return new Promise(function (resolve, reject) {
-    const req = indexedDB.open("simplescp-local", 1);
-    req.onupgradeneeded = function () {
-      const db = req.result;
-      if (!db.objectStoreNames.contains("locations")) {
-        db.createObjectStore("locations", { keyPath:"id" });
-      }
-    };
-    req.onsuccess = function () { resolve(req.result); };
-    req.onerror = function () { reject(req.error || new Error("Unable to open local location storage.")); };
-  });
-}
-
-async function loadLocalLocations() {
-  if (!("indexedDB" in window)) {
-    state.localLocations = [];
-    return;
-  }
-  const db = await openLocalDB();
-  state.localLocations = await new Promise(function (resolve, reject) {
-    const tx = db.transaction("locations", "readonly");
-    const req = tx.objectStore("locations").getAll();
-    req.onsuccess = function () { resolve(req.result || []); };
-    req.onerror = function () { reject(req.error || new Error("Unable to load local locations.")); };
-  });
-  db.close();
-  updateLocalLocationStatus();
-}
-
-async function saveLocalLocation(handle) {
-  const id = "loc-" + crypto.randomUUID();
-  const record = { id:id, name:handle.name || "Local location", handle:handle, addedAt:Date.now() };
-  const db = await openLocalDB();
-  await new Promise(function (resolve, reject) {
-    const tx = db.transaction("locations", "readwrite");
-    tx.objectStore("locations").put(record);
-    tx.oncomplete = resolve;
-    tx.onerror = function () { reject(tx.error || new Error("Unable to save local location.")); };
-  });
-  db.close();
-  state.localLocations.push(record);
-  updateLocalLocationStatus();
-  return record;
-}
-
-async function removeLocalLocation(id) {
-  const db = await openLocalDB();
-  await new Promise(function (resolve, reject) {
-    const tx = db.transaction("locations", "readwrite");
-    tx.objectStore("locations").delete(id);
-    tx.oncomplete = resolve;
-    tx.onerror = function () { reject(tx.error || new Error("Unable to remove local location.")); };
-  });
-  db.close();
-  state.localLocations = state.localLocations.filter(function (item) { return item.id !== id; });
-  updateLocalLocationStatus();
 }
 
 function updateLocalLocationStatus() {
   const el = $("#localLocationStatus");
   if (!el) return;
-  const count = state.localLocations.length;
-  el.textContent = count
-    ? "Local computer: " + count + " saved location" + (count === 1 ? "" : "s")
-    : "Local computer: no saved locations";
-}
-
-async function ensureLocalPermission(record) {
-  if (!record || !record.handle) return false;
-  const opts = { mode:"readwrite" };
-  if (typeof record.handle.queryPermission === "function") {
-    const current = await record.handle.queryPermission(opts);
-    if (current === "granted") return true;
-  }
-  if (typeof record.handle.requestPermission === "function") {
-    return (await record.handle.requestPermission(opts)) === "granted";
-  }
-  return true;
-}
-
-async function addLocalLocation(side) {
-  if (!localDeckSupported()) {
-    toast("Local computer access requires Chrome or Edge over HTTPS (or localhost).", "error");
+  if (!state.desktop.available) {
+    el.textContent = "Local computer: open through SimpleSCP Desktop";
     return;
   }
+  const name = state.desktop.device?.name || state.desktop.info?.device_name || "SimpleSCP Desktop";
+  el.textContent = "Local computer: " + name + " · " + state.desktop.roots.length + " available location" + (state.desktop.roots.length === 1 ? "" : "s");
+}
+
+async function detectDesktop() {
   try {
-    const handle = await window.showDirectoryPicker({ mode:"readwrite", id:"simplescp-local-" + side });
-    const record = await saveLocalLocation(handle);
-    const pane = state.panes[side];
-    pane.mode = "browser";
-    pane.connectionId = 0;
-    pane.path = "/";
-    pane.selected = [];
-    pane.localRoot = handle;
-    pane.localRootId = record.id;
-    pane.localRootName = record.name;
-    pane.localHandles = new Map();
-    renderServerSelects();
-    await loadPane(side);
-  } catch (err) {
-    if (!err || err.name !== "AbortError") {
-      toast(err && err.message ? err.message : "Unable to add local location.", "error");
-    }
-  }
-}
-
-async function requestPersistentLocalAccess(record) {
-  if (!record || !record.handle) return false;
-  const opts = { mode:"readwrite" };
-
-  if (typeof record.handle.queryPermission === "function") {
-    const current = await record.handle.queryPermission(opts);
-    if (current === "granted") return true;
-  }
-
-  if (typeof record.handle.requestPermission === "function") {
-    try {
-      return (await record.handle.requestPermission(opts)) === "granted";
-    } catch (_) {
-      return false;
-    }
-  }
-  return true;
-}
-
-async function reconnectLocalAccess(side, preferredId) {
-  const records = preferredId
-    ? state.localLocations.filter(function (item) { return item.id === preferredId; })
-    : state.localLocations.slice();
-
-  if (!records.length) {
-    await addLocalLocation(side);
+    const response = await fetch("/_desktop/info", { cache:"no-store" });
+    if (!response.ok) throw new Error("Desktop unavailable");
+    const info = await response.json();
+    if (!info || !info.available) throw new Error("Desktop unavailable");
+    state.desktop.available = true;
+    state.desktop.info = info;
+    await api("/api/desktop/enroll", {
+      method:"POST",
+      body:{ roots: info.roots || [] }
+    });
+    await refreshDesktopAccess();
+    return true;
+  } catch (_) {
+    state.desktop.available = false;
+    state.desktop.info = null;
+    state.desktop.device = null;
+    state.desktop.roots = [];
+    state.desktop.ticket = "";
+    state.desktop.expires = 0;
+    updateLocalLocationStatus();
     return false;
   }
-
-  // Chromium's persistent File System Access prompt can restore access to
-  // previously stored handles in one visit. Trigger from the user's click.
-  for (const record of records) {
-    if (await requestPersistentLocalAccess(record)) {
-      updateLocalLocationStatus();
-      return true;
-    }
-  }
-  toast("Local access was not granted. Choose “Allow on every visit” to keep it connected.", "error");
-  return false;
 }
 
-async function selectLocalLocation(side, id) {
-  const record = state.localLocations.find(function (item) { return item.id === id; });
-  if (!record) return;
-
-  if (!await ensureLocalPermission(record)) {
-    if (!await reconnectLocalAccess(side, id)) return;
-  }
-
-  const pane = state.panes[side];
-  pane.mode = "browser";
-  pane.connectionId = 0;
-  pane.path = "/";
-  pane.selected = [];
-  pane.localRoot = record.handle;
-  pane.localRootId = record.id;
-  pane.localRootName = record.name;
-  pane.localHandles = new Map();
-  pane.localVirtualRoot = false;
+async function refreshDesktopAccess() {
+  if (!state.desktop.available) throw new Error("Open this server through SimpleSCP Desktop to use Local computer.");
+  const data = await api("/api/desktop/access");
+  state.desktop.device = data.device || null;
+  state.desktop.roots = data.roots || [];
+  state.desktop.ticket = data.ticket || "";
+  state.desktop.expires = Number(data.expires || 0);
+  updateLocalLocationStatus();
   renderServerSelects();
-  await loadPane(side);
+  return data;
+}
+
+async function ensureDesktopTicket() {
+  const now = Math.floor(Date.now() / 1000);
+  if (!state.desktop.ticket || state.desktop.expires <= now + 45) {
+    await refreshDesktopAccess();
+  }
+}
+
+async function desktopFetch(url, options) {
+  await ensureDesktopTicket();
+  const opts = Object.assign({}, options || {});
+  opts.headers = Object.assign({}, opts.headers || {}, {
+    "X-SimpleSCP-Access": state.desktop.ticket
+  });
+  if (opts.body && !(opts.body instanceof Blob) && !(opts.body instanceof FormData) && typeof opts.body !== "string") {
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(opts.body);
+  }
+  const response = await fetch(url, opts);
+  if (response.status === 403 && state.desktop.available) {
+    state.desktop.ticket = "";
+  }
+  if (response.status === 204) return null;
+  const type = response.headers.get("content-type") || "";
+  const data = type.includes("application/json") ? await response.json() : await response.text();
+  if (!response.ok) {
+    throw new Error(data && data.error ? data.error : (data || "Desktop request failed"));
+  }
+  return data;
+}
+
+function desktopRootById(id) {
+  return state.desktop.roots.find(function (root) { return Number(root.id) === Number(id); }) || null;
+}
+
+function desktopSeparator(path) {
+  return String(path || "").includes("\\") ? "\\" : "/";
+}
+
+function desktopJoin(base, name) {
+  const sep = desktopSeparator(base);
+  return String(base || "").replace(/[\\/]+$/, "") + sep + String(name || "").replace(/^[\\/]+/, "");
+}
+
+function desktopSamePath(a, b) {
+  const left = String(a || "").replace(/[\\/]+$/, "");
+  const right = String(b || "").replace(/[\\/]+$/, "");
+  const windows = left.includes("\\") || /^[A-Za-z]:/.test(left);
+  return windows ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+function desktopParent(path, rootPath) {
+  if (desktopSamePath(path, rootPath)) return "";
+  const trimmed = String(path || "").replace(/[\\/]+$/, "");
+  const index = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
+  if (index < 0) return rootPath;
+  let parent = trimmed.slice(0, index);
+  if (/^[A-Za-z]:$/.test(parent)) parent += "\\";
+  if (!parent) parent = "/";
+  return parent;
+}
+
+function desktopRelativeParts(path, rootPath) {
+  const raw = String(path || "");
+  const root = String(rootPath || "");
+  let relative = raw;
+  if (raw.toLowerCase().startsWith(root.toLowerCase())) {
+    relative = raw.slice(root.length);
+  }
+  return relative.split(/[\\/]+/).filter(Boolean);
 }
 
 async function showLocalComputer(side) {
+  if (!state.desktop.available) {
+    toast("Local computer requires SimpleSCP Desktop. Open this server from the Desktop application.", "error");
+    state.panes[side].mode = "remote";
+    renderServerSelects();
+    return;
+  }
   const pane = state.panes[side];
-  pane.mode = "browser";
+  pane.mode = "desktop";
   pane.connectionId = 0;
-  pane.path = "/";
+  pane.path = "";
   pane.selected = [];
-  pane.localRoot = null;
   pane.localRootId = "";
   pane.localRootName = "";
-  pane.localHandles = new Map();
-  pane.localVirtualRoot = true;
   renderServerSelects();
   await loadPane(side);
 }
 
+async function selectDesktopRoot(side, id) {
+  const root = desktopRootById(id);
+  if (!root) return;
+  const pane = state.panes[side];
+  pane.mode = "desktop";
+  pane.connectionId = 0;
+  pane.path = root.path;
+  pane.selected = [];
+  pane.localRootId = String(root.id);
+  pane.localRootName = root.name;
+  renderServerSelects();
+  await loadPane(side);
+}
 
 function toast(message, type) {
   const host = $("#toastHost");
