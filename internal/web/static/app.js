@@ -1408,6 +1408,178 @@ async function waitForRestart() {
   $("#updateMessage").textContent = "Update was staged. Reload the page after the container finishes restarting.";
 }
 
+function desktopLastSeenLabel(value) {
+  if (!value) return "Never";
+  const t = new Date(value);
+  const diff = Date.now() - t.getTime();
+  if (diff < 120000) return "Online";
+  if (diff < 3600000) return Math.max(1, Math.round(diff / 60000)) + "m ago";
+  if (diff < 86400000) return Math.round(diff / 3600000) + "h ago";
+  return t.toLocaleString();
+}
+
+function desktopOnline(value) {
+  if (!value) return false;
+  return Date.now() - new Date(value).getTime() < 120000;
+}
+
+function findACL(root, userId) {
+  return (root.acls || []).find(function (acl) { return Number(acl.user_id) === Number(userId); }) || {
+    can_read:false, can_write:false, can_rename:false, can_delete:false
+  };
+}
+
+function renderDesktopAdmin(data) {
+  const host = $("#desktopAdminList");
+  if (!host) return;
+  const desktops = data.desktops || [];
+  const users = data.users || [];
+  $("#desktopAdminSummary").textContent = desktops.length + " enrolled desktop" + (desktops.length === 1 ? "" : "s");
+
+  if (!desktops.length) {
+    host.innerHTML = '<div class="desktop-admin-empty"><strong>No desktops enrolled</strong><span>Open SimpleSCP through the Desktop application and sign in to enroll that machine.</span></div>';
+    return;
+  }
+
+  host.innerHTML = desktops.map(function (device) {
+    const online = desktopOnline(device.last_seen);
+    const roots = device.roots || [];
+    const rootHTML = roots.length ? roots.map(function (root) {
+      const used = Number(root.total_bytes || 0) > 0 ? Math.max(0, Number(root.total_bytes) - Number(root.free_bytes || 0)) : 0;
+      const capacity = Number(root.total_bytes || 0) > 0 ? bytes(used) + " used of " + bytes(root.total_bytes) : (root.detail || root.kind || "location");
+      const aclRows = users.map(function (user) {
+        const acl = findACL(root, user.id);
+        return '<tr data-root-id="' + root.id + '" data-user-id="' + user.id + '">' +
+          '<td><strong>' + escapeHTML(user.username) + '</strong>' + (Number(user.id) === Number(device.owner_user_id) ? '<span class="acl-owner">owner</span>' : '') + '</td>' +
+          '<td><label class="acl-check"><input type="checkbox" data-perm="can_read"' + (acl.can_read ? " checked" : "") + '>Read</label></td>' +
+          '<td><label class="acl-check"><input type="checkbox" data-perm="can_write"' + (acl.can_write ? " checked" : "") + '>Write</label></td>' +
+          '<td><label class="acl-check"><input type="checkbox" data-perm="can_rename"' + (acl.can_rename ? " checked" : "") + '>Rename</label></td>' +
+          '<td><label class="acl-check"><input type="checkbox" data-perm="can_delete"' + (acl.can_delete ? " checked" : "") + '>Delete</label></td>' +
+          '</tr>';
+      }).join("");
+
+      return '<div class="desktop-root-card" data-root-id="' + root.id + '">' +
+        '<div class="desktop-root-head">' +
+          '<div class="desktop-root-icon">' + (root.kind === "network" ? "⇄" : root.kind === "removable" ? "▣" : "▰") + '</div>' +
+          '<div class="desktop-root-copy"><strong>' + escapeHTML(root.name) + '</strong><code>' + escapeHTML(root.path) + '</code><span>' + escapeHTML(capacity) + '</span></div>' +
+          '<div class="desktop-root-state"><span class="inventory-state ' + (root.online ? "online" : "offline") + '">' + (root.online ? "online" : "offline") + '</span>' +
+          '<label class="switch-line"><input class="root-enabled" type="checkbox"' + (root.enabled ? " checked" : "") + '>Available</label></div>' +
+        '</div>' +
+        '<details class="acl-panel"><summary>Access control</summary>' +
+          '<table class="acl-table"><thead><tr><th>User</th><th>Read</th><th>Write</th><th>Rename</th><th>Delete</th></tr></thead><tbody>' + aclRows + '</tbody></table>' +
+        '</details>' +
+      '</div>';
+    }).join("") : '<div class="desktop-no-roots">No filesystem locations reported yet. Keep SimpleSCP Desktop open so it can check in.</div>';
+
+    return '<article class="desktop-device-card" data-device-id="' + device.id + '">' +
+      '<div class="desktop-device-head">' +
+        '<div class="desktop-device-main"><span class="device-presence ' + (online ? "online" : "offline") + '"></span>' +
+          '<div><input class="desktop-name-input" value="' + escapeHTML(device.name) + '" maxlength="128">' +
+          '<span>' + escapeHTML(device.platform + " / " + device.arch) + ' · owner ' + escapeHTML(device.owner_name || "") + ' · ' + escapeHTML(desktopLastSeenLabel(device.last_seen)) + '</span></div></div>' +
+        '<div class="desktop-device-actions">' +
+          '<label class="switch-line"><input class="desktop-enabled" type="checkbox"' + (device.enabled ? " checked" : "") + '>Enabled</label>' +
+          '<button class="desktop-save" type="button">Save</button>' +
+          '<button class="desktop-remove danger-action" type="button">Remove</button>' +
+        '</div>' +
+      '</div>' +
+      '<div class="desktop-roots">' + rootHTML + '</div>' +
+    '</article>';
+  }).join("");
+
+  all(".desktop-device-card", host).forEach(function (card) {
+    const deviceId = Number(card.dataset.deviceId);
+    $(".desktop-save", card).addEventListener("click", async function () {
+      try {
+        await api("/api/admin/desktops/" + deviceId, {
+          method:"PUT",
+          body:{
+            name:$(".desktop-name-input", card).value.trim(),
+            enabled:$(".desktop-enabled", card).checked
+          }
+        });
+        toast("Desktop settings saved.", "success");
+        await loadDesktopAdmin();
+      } catch (err) { toast(err.message, "error"); }
+    });
+    $(".desktop-remove", card).addEventListener("click", async function () {
+      const ok = await showActionDialog({
+        eyebrow:"REMOVE DESKTOP",
+        title:"Remove this desktop?",
+        description:"The desktop will need to enroll again before SimpleSCP can use its local filesystems.",
+        warning:"Stored location inventory and ACLs for this desktop will be deleted.",
+        confirmLabel:"Remove desktop",
+        danger:true
+      });
+      if (!ok) return;
+      try {
+        await api("/api/admin/desktops/" + deviceId, { method:"DELETE" });
+        toast("Desktop removed.", "success");
+        await loadDesktopAdmin();
+      } catch (err) { toast(err.message, "error"); }
+    });
+  });
+
+  all(".desktop-root-card", host).forEach(function (rootCard) {
+    const rootId = Number(rootCard.dataset.rootId);
+    $(".root-enabled", rootCard).addEventListener("change", async function () {
+      try {
+        await api("/api/admin/desktops/0/roots/" + rootId, {
+          method:"PUT",
+          body:{enabled:this.checked}
+        });
+        toast(this.checked ? "Location enabled." : "Location disabled.", "success");
+      } catch (err) {
+        this.checked = !this.checked;
+        toast(err.message, "error");
+      }
+    });
+  });
+
+  all(".acl-table tbody tr", host).forEach(function (row) {
+    all('input[type="checkbox"]', row).forEach(function (box) {
+      box.addEventListener("change", async function () {
+        const rootId = Number(row.dataset.rootId);
+        const userId = Number(row.dataset.userId);
+        const body = {};
+        all('input[type="checkbox"]', row).forEach(function (input) {
+          body[input.dataset.perm] = input.checked;
+        });
+        try {
+          await api("/api/admin/desktops/0/roots/" + rootId + "/acl/" + userId, { method:"PUT", body:body });
+        } catch (err) {
+          toast(err.message, "error");
+          await loadDesktopAdmin();
+        }
+      });
+    });
+  });
+}
+
+async function loadDesktopAdmin() {
+  const host = $("#desktopAdminList");
+  if (host) host.innerHTML = '<div class="desktop-admin-empty">Loading desktop inventory…</div>';
+  try {
+    const data = await api("/api/admin/desktops");
+    renderDesktopAdmin(data);
+  } catch (err) {
+    if (host) host.innerHTML = '<div class="desktop-admin-empty error">' + escapeHTML(err.message) + '</div>';
+  }
+}
+
+function wireDesktopAdmin() {
+  const button = $("#desktopAdminBtn");
+  const dialog = $("#desktopAdminDialog");
+  if (!button || !dialog) return;
+  button.addEventListener("click", function () {
+    dialog.showModal();
+    loadDesktopAdmin();
+  });
+  $("#desktopAdminRefresh")?.addEventListener("click", loadDesktopAdmin);
+  all(".desktop-admin-close").forEach(function (close) {
+    close.addEventListener("click", function () { dialog.close(); });
+  });
+}
+
 function wireUpdater() {
   const button = $("#updateBtn");
   const dialog = $("#updateDialog");
@@ -1533,6 +1705,7 @@ document.addEventListener("DOMContentLoaded", async function () {
   wirePanes();
   wirePremiumControls();
   wireDialogs();
+  wireDesktopAdmin();
   wireUpdater();
   $("#logoutBtn").addEventListener("click", logout);
   $("#refreshConnections").addEventListener("click", loadConnections);
