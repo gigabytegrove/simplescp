@@ -1524,6 +1524,66 @@ function wireDesktopAdmin() {
   });
 }
 
+async function loadServerSettings() {
+  const data = await api("/api/admin/settings");
+  const settings = data.settings || {};
+  $("#settingCookieSecure").checked = Boolean(settings.cookie_secure);
+  $("#settingSessionHours").value = (Number(settings.session_ttl_seconds || 86400) / 3600).toString();
+  $("#settingSSHTimeout").value = Number(settings.ssh_timeout_seconds || 15);
+  $("#settingMaxUploadGB").value = (Number(settings.max_upload_bytes || 10737418240) / 1073741824).toFixed(2).replace(/\.00$/, "");
+  $("#settingConcurrentTransfers").value = Number(settings.max_concurrent_transfers || 4);
+  $("#settingLoginAttempts").value = Number(settings.login_max_attempts || 5);
+  $("#settingLoginWindow").value = Math.round(Number(settings.login_window_seconds || 900) / 60);
+}
+
+function wireSettings() {
+  const button = $("#settingsBtn");
+  const dialog = $("#settingsDialog");
+  const form = $("#settingsForm");
+  if (!button || !dialog || !form) return;
+
+  button.addEventListener("click", async function () {
+    dialog.showModal();
+    try {
+      await loadServerSettings();
+    } catch (err) {
+      toast(err.message, "error");
+    }
+  });
+
+  all(".settings-close").forEach(function (close) {
+    close.addEventListener("click", function () { dialog.close(); });
+  });
+
+  form.addEventListener("submit", async function (event) {
+    event.preventDefault();
+    const save = $("#settingsSaveBtn");
+    save.disabled = true;
+
+    const sessionHours = Number($("#settingSessionHours").value);
+    const uploadGiB = Number($("#settingMaxUploadGB").value);
+    const body = {
+      cookie_secure: $("#settingCookieSecure").checked,
+      session_ttl_seconds: Math.round(sessionHours * 3600),
+      ssh_timeout_seconds: Number($("#settingSSHTimeout").value),
+      max_upload_bytes: Math.round(uploadGiB * 1073741824),
+      max_concurrent_transfers: Number($("#settingConcurrentTransfers").value),
+      login_max_attempts: Number($("#settingLoginAttempts").value),
+      login_window_seconds: Number($("#settingLoginWindow").value) * 60
+    };
+
+    try {
+      await api("/api/admin/settings", { method:"PUT", body:body });
+      toast("Server settings saved and applied.", "success");
+      dialog.close();
+    } catch (err) {
+      toast(err.message, "error");
+    } finally {
+      save.disabled = false;
+    }
+  });
+}
+
 function wireUpdater() {
   const button = $("#updateBtn");
   const dialog = $("#updateDialog");
@@ -1650,6 +1710,7 @@ document.addEventListener("DOMContentLoaded", async function () {
   wirePremiumControls();
   wireDialogs();
   wireDesktopAdmin();
+  wireSettings();
   wireUpdater();
   $("#logoutBtn").addEventListener("click", logout);
   $("#refreshConnections").addEventListener("click", loadConnections);
