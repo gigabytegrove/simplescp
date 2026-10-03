@@ -10,8 +10,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gigabytegrove/simplescp/internal/buildinfo"
 	"github.com/gigabytegrove/simplescp/internal/config"
 	"github.com/gigabytegrove/simplescp/internal/store"
+	"github.com/gigabytegrove/simplescp/internal/updater"
 	"github.com/gigabytegrove/simplescp/internal/vault"
 	webapp "github.com/gigabytegrove/simplescp/internal/web"
 )
@@ -71,6 +73,64 @@ func main() {
 			os.Exit(1)
 		}
 	}()
+
+	if cfg.AutoUpdate {
+		updateManager := updater.New(cfg.DataDir)
+		go func() {
+			initialDelay := time.NewTimer(45 * time.Second)
+			defer initialDelay.Stop()
+
+			select {
+			case <-initialDelay.C:
+			}
+
+			ticker := time.NewTicker(cfg.AutoUpdateInterval)
+			defer ticker.Stop()
+
+			check := func() bool {
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+				defer cancel()
+
+				status, err := updateManager.Status(ctx, buildinfo.Version, buildinfo.Commit)
+				if err != nil {
+					logger.Warn("automatic update check failed", "error", err)
+					return false
+				}
+				if !status.UpdateAvailable {
+					logger.Info("automatic update check complete", "current", buildinfo.Version, "latest", status.Latest)
+					return false
+				}
+
+				result, err := updateManager.Install(ctx, buildinfo.Version)
+				if err != nil {
+					logger.Error("automatic update failed", "error", err)
+					return false
+				}
+
+				logger.Info("automatic update installed; restarting", "version", result.Version, "sha256", result.SHA256)
+				proc, err := os.FindProcess(os.Getpid())
+				if err != nil {
+					logger.Error("automatic update restart failed", "error", err)
+					return false
+				}
+				if err := proc.Signal(syscall.SIGTERM); err != nil {
+					logger.Error("automatic update restart signal failed", "error", err)
+					return false
+				}
+				return true
+			}
+
+			if check() {
+				return
+			}
+			for range ticker.C {
+				if check() {
+					return
+				}
+			}
+		}()
+		logger.Info("automatic updates enabled", "interval", cfg.AutoUpdateInterval.String())
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
