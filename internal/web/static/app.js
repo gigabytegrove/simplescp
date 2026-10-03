@@ -27,7 +27,8 @@ function makePaneState() {
     localRoot: null,
     localRootId: "",
     localRootName: "",
-    localHandles: new Map()
+    localHandles: new Map(),
+    localVirtualRoot: false
   };
 }
 
@@ -142,13 +143,55 @@ async function addLocalLocation(side) {
   }
 }
 
+async function requestPersistentLocalAccess(record) {
+  if (!record || !record.handle) return false;
+  const opts = { mode:"readwrite" };
+
+  if (typeof record.handle.queryPermission === "function") {
+    const current = await record.handle.queryPermission(opts);
+    if (current === "granted") return true;
+  }
+
+  if (typeof record.handle.requestPermission === "function") {
+    try {
+      return (await record.handle.requestPermission(opts)) === "granted";
+    } catch (_) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function reconnectLocalAccess(side, preferredId) {
+  const records = preferredId
+    ? state.localLocations.filter(function (item) { return item.id === preferredId; })
+    : state.localLocations.slice();
+
+  if (!records.length) {
+    await addLocalLocation(side);
+    return false;
+  }
+
+  // Chromium's persistent File System Access prompt can restore access to
+  // previously stored handles in one visit. Trigger from the user's click.
+  for (const record of records) {
+    if (await requestPersistentLocalAccess(record)) {
+      updateLocalLocationStatus();
+      return true;
+    }
+  }
+  toast("Local access was not granted. Choose “Allow on every visit” to keep it connected.", "error");
+  return false;
+}
+
 async function selectLocalLocation(side, id) {
   const record = state.localLocations.find(function (item) { return item.id === id; });
   if (!record) return;
+
   if (!await ensureLocalPermission(record)) {
-    toast("Permission to this local location was not granted.", "error");
-    return;
+    if (!await reconnectLocalAccess(side, id)) return;
   }
+
   const pane = state.panes[side];
   pane.mode = "browser";
   pane.connectionId = 0;
@@ -158,9 +201,26 @@ async function selectLocalLocation(side, id) {
   pane.localRootId = record.id;
   pane.localRootName = record.name;
   pane.localHandles = new Map();
+  pane.localVirtualRoot = false;
   renderServerSelects();
   await loadPane(side);
 }
+
+async function showLocalComputer(side) {
+  const pane = state.panes[side];
+  pane.mode = "browser";
+  pane.connectionId = 0;
+  pane.path = "/";
+  pane.selected = [];
+  pane.localRoot = null;
+  pane.localRootId = "";
+  pane.localRootName = "";
+  pane.localHandles = new Map();
+  pane.localVirtualRoot = true;
+  renderServerSelects();
+  await loadPane(side);
+}
+
 
 function toast(message, type) {
   const host = $("#toastHost");
@@ -261,12 +321,50 @@ function renderBreadcrumbs(side) {
   const host = $(".breadcrumbs", el);
   if (!host) return;
 
+  if (pane.mode === "browser") {
+    if (!pane.localRoot) {
+      host.innerHTML = '<button type="button" class="breadcrumb current" data-local-home="1">This PC</button>';
+      return;
+    }
+
+    const parts = normalizePath(pane.path).split("/").filter(Boolean);
+    const crumbs = [
+      { label:"This PC", action:"home" },
+      { label:pane.localRootName || "Local location", path:"/" }
+    ];
+    let current = "";
+    parts.forEach(function (part) {
+      current += "/" + part;
+      crumbs.push({ label:part, path:current });
+    });
+
+    host.innerHTML = crumbs.map(function (crumb, index) {
+      const last = index === crumbs.length - 1;
+      const attrs = crumb.action === "home"
+        ? ' data-local-home="1"'
+        : ' data-path="' + escapeHTML(crumb.path) + '"';
+      return '<button type="button" class="breadcrumb' + (last ? " current" : "") + '"' + attrs + '>' +
+        escapeHTML(crumb.label) + '</button>' + (last ? "" : '<span class="breadcrumb-sep">›</span>');
+    }).join("");
+
+    host.querySelectorAll(".breadcrumb").forEach(function (button) {
+      button.addEventListener("click", function () {
+        if (button.dataset.localHome === "1") showLocalComputer(side);
+        else {
+          pane.path = button.dataset.path;
+          loadPane(side);
+        }
+      });
+    });
+    return;
+  }
+
   const parts = normalizePath(pane.path).split("/").filter(Boolean);
-  const crumbs = [{ label: pane.mode === "browser" ? (pane.localRootName || "Local") : "/", path: "/" }];
+  const crumbs = [{ label:"/", path:"/" }];
   let current = "";
   parts.forEach(function (part) {
     current += "/" + part;
-    crumbs.push({ label: part, path: current });
+    crumbs.push({ label:part, path:current });
   });
 
   host.innerHTML = crumbs.map(function (crumb, index) {
@@ -456,18 +554,18 @@ function renderServerSelects() {
     $(".endpoint-type", paneEl).value = pane.mode;
 
     const server = $(".server-select", paneEl);
-    let serverHTML = '<option value="">Choose session…</option>';
+    let serverHTML = '<option value="">Select server…</option>';
     state.connections.forEach(function (c) {
       serverHTML += '<option value="' + c.id + '"' + (pane.mode === "remote" && Number(pane.connectionId) === Number(c.id) ? " selected" : "") + '>' + escapeHTML(c.name) + '</option>';
     });
     server.innerHTML = serverHTML;
 
     const locations = $(".local-location-select", paneEl);
-    let localHTML = '<option value="">Choose local location…</option>';
+    let localHTML = '<option value="__thispc__"' + (pane.mode === "browser" && !pane.localRoot ? " selected" : "") + '>This PC</option>';
     state.localLocations.forEach(function (item) {
       localHTML += '<option value="' + escapeHTML(item.id) + '"' + (pane.mode === "browser" && pane.localRootId === item.id ? " selected" : "") + '>' + escapeHTML(item.name) + '</option>';
     });
-    localHTML += '<option value="__add__">＋ Add location…</option>';
+    localHTML += '<option value="__add__">＋ Add drive or folder…</option>';
     locations.innerHTML = localHTML;
   });
 }
@@ -484,26 +582,13 @@ async function connectPane(side, id) {
   pane.localRootId = "";
   pane.localRootName = "";
   pane.localHandles = new Map();
+  pane.localVirtualRoot = false;
   renderServerSelects();
   await loadPane(side);
 }
 
 async function openLocalDeck(side) {
-  if (!state.localLocations.length) {
-    await addLocalLocation(side);
-    return;
-  }
-  const pane = state.panes[side];
-  pane.mode = "browser";
-  pane.connectionId = 0;
-  pane.path = "/";
-  pane.selected = [];
-  if (!pane.localRoot && state.localLocations[0]) {
-    await selectLocalLocation(side, state.localLocations[0].id);
-    return;
-  }
-  renderServerSelects();
-  await loadPane(side);
+  await showLocalComputer(side);
 }
 
 async function localDirectoryForPath(pane, rawPath) {
@@ -520,28 +605,60 @@ function updatePaneModeUI(side) {
   const pane = state.panes[side];
   const el = paneElement(side);
   const local = pane.mode === "browser";
+  const localHome = local && !pane.localRoot;
 
   el.classList.toggle("local-pane", local);
+  el.classList.toggle("local-home", localHome);
   $(".endpoint-type", el).value = pane.mode;
   $(".server-select", el).classList.toggle("hidden", local);
   $(".local-location-select", el).classList.toggle("hidden", !local);
   $(".add-location-btn", el).classList.toggle("hidden", !local);
-  $(".path-prefix", el).textContent = local ? "local:" : "sftp:";
-  $(".upload-btn", el).textContent = local ? "Add files…" : "Upload";
-  $(".download-btn", el).textContent = "Download";
-  $(".path-input", el).readOnly = false;
+  $(".path-prefix", el).textContent = local ? "local" : "sftp";
+  $(".path-input", el).value = localHome ? "This PC" : pane.path;
+  $(".path-input", el).readOnly = localHome;
+  $(".upload-btn", el).textContent = local ? "Import" : "Upload";
+  $(".mkdir-btn", el).disabled = localHome;
 }
 
 async function loadLocalPane(side) {
   const pane = state.panes[side];
   const el = paneElement(side);
   const tbody = $(".file-list", el);
+
   if (!pane.localRoot) {
-    tbody.innerHTML = '<tr><td colspan="3" class="muted empty-pane-message"><strong>No local folder granted</strong><span>Choose Local computer… and grant a folder.</span></td></tr>';
+    pane.localVirtualRoot = true;
+    pane.path = "/";
+    pane.localHandles = new Map();
+
+    const entries = state.localLocations.map(function (item) {
+      const virtualPath = "/@local/" + item.id;
+      pane.localHandles.set(virtualPath, item.handle);
+      return { name:item.name, path:virtualPath, is_dir:true, size:0, mod_time:null, local_root_id:item.id };
+    });
+
+    $(".path-input", el).value = "This PC";
+    renderBreadcrumbs(side);
+
+    if (!entries.length) {
+      tbody.innerHTML =
+        '<tr class="local-welcome-row"><td colspan="3"><div class="local-welcome">' +
+        '<div class="local-welcome-icon">⌂</div><strong>No local locations yet</strong>' +
+        '<span>Add a drive or folder once, then choose “Allow on every visit” so SimpleSCP can keep it available.</span>' +
+        '<button type="button" class="local-welcome-add">Add drive or folder…</button>' +
+        '</div></td></tr>';
+      $(".local-welcome-add", tbody)?.addEventListener("click", function () { addLocalLocation(side); });
+    } else {
+      renderEntries(side, entries);
+      filterPane(side, $(".pane-search", el)?.value || "");
+    }
+
+    setStatus("Local computer", "ready");
+    updatePaneSelection(side);
     return;
   }
 
-  setStatus("Reading local folder…", "busy");
+  pane.localVirtualRoot = false;
+  setStatus("Reading local files…", "busy");
   try {
     const dir = await localDirectoryForPath(pane, pane.path);
     const entries = [];
@@ -562,8 +679,16 @@ async function loadLocalPane(side) {
     filterPane(side, $(".pane-search", el)?.value || "");
     setStatus("Ready", "ready");
   } catch (err) {
-    tbody.innerHTML = '<tr><td colspan="3" class="muted">' + escapeHTML(err.message || "Unable to read local folder") + '</td></tr>';
-    setStatus("Local folder unavailable", "error");
+    tbody.innerHTML =
+      '<tr><td colspan="3"><div class="local-welcome compact">' +
+      '<strong>Local access needs reconnecting</strong>' +
+      '<span>Use one permission prompt and choose “Allow on every visit” to keep this location available.</span>' +
+      '<button type="button" class="local-reconnect">Reconnect local access</button>' +
+      '</div></td></tr>';
+    $(".local-reconnect", tbody)?.addEventListener("click", async function () {
+      if (await reconnectLocalAccess(side, pane.localRootId)) await loadPane(side);
+    });
+    setStatus("Local permission required", "error");
   }
 }
 
@@ -631,20 +756,27 @@ function renderEntries(side, entries) {
   const tbody = $(".file-list", el);
 
   if (!entries.length) {
-    tbody.innerHTML = '<tr><td colspan="3" class="muted empty-pane-message"><strong>This folder is empty</strong><span>Upload a file or create a new folder here.</span></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="3" class="muted empty-pane-message"><strong>This folder is empty</strong><span>There are no items in this location.</span></td></tr>';
     return;
   }
 
   entries.sort(function (a, b) {
     if (a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
-    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+    return a.name.localeCompare(b.name, undefined, { sensitivity:"base" });
   });
 
   tbody.innerHTML = entries.map(function (entry) {
-    const kind = fileKind(entry.name, entry.is_dir);
-    return '<tr class="entry-row" role="row" aria-selected="false" data-path="' + escapeHTML(entry.path) + '" data-name="' + escapeHTML(entry.name) + '" data-dir="' + (entry.is_dir ? "1" : "0") + '" data-size="' + entry.size + '">' +
-      '<td><div class="file-name"><span class="file-icon file-kind-' + kind.kind + '">' + kind.icon + '</span><span class="file-name-text">' + escapeHTML(entry.name) + '</span></div></td>' +
-      '<td>' + (entry.is_dir ? "—" : bytes(entry.size)) + '</td>' +
+    const isLocalRoot = Boolean(entry.local_root_id);
+    const kind = isLocalRoot ? { icon:"▣", kind:"drive" } : fileKind(entry.name, entry.is_dir);
+    return '<tr class="entry-row' + (isLocalRoot ? " local-root-row" : "") + '" role="row" aria-selected="false" ' +
+      'data-path="' + escapeHTML(entry.path) + '" data-name="' + escapeHTML(entry.name) + '" ' +
+      'data-dir="' + (entry.is_dir ? "1" : "0") + '" data-size="' + entry.size + '"' +
+      (isLocalRoot ? ' data-local-root-id="' + escapeHTML(entry.local_root_id) + '"' : "") + '>' +
+      '<td><div class="file-name"><span class="file-icon file-kind-' + kind.kind + '">' + kind.icon + '</span>' +
+      '<span class="file-name-text">' + escapeHTML(entry.name) + '</span>' +
+      (isLocalRoot ? '<span class="entry-badge">LOCAL</span>' : "") +
+      '</div></td>' +
+      '<td>' + (isLocalRoot ? "Location" : entry.is_dir ? "—" : bytes(entry.size)) + '</td>' +
       '<td>' + (entry.mod_time ? new Date(entry.mod_time).toLocaleString() : "—") + '</td>' +
       '</tr>';
   }).join("");
@@ -654,7 +786,11 @@ function renderEntries(side, entries) {
       setActivePane(side);
       selectEntry(side, row, event.ctrlKey || event.metaKey, event.shiftKey);
     });
-    row.addEventListener("dblclick", function () {
+    row.addEventListener("dblclick", async function () {
+      if (row.dataset.localRootId) {
+        await selectLocalLocation(side, row.dataset.localRootId);
+        return;
+      }
       if (row.dataset.dir === "1") {
         state.panes[side].path = row.dataset.path;
         loadPane(side);
@@ -671,6 +807,7 @@ function rowItem(row) {
     name: row.dataset.name,
     isDir: row.dataset.dir === "1",
     size: Number(row.dataset.size || 0),
+    localRootId: row.dataset.localRootId || "",
     handle: pane && pane.mode === "browser" ? pane.localHandles.get(row.dataset.path) || null : null
   };
 }
@@ -729,17 +866,19 @@ function updatePaneSelection(side) {
   const el = paneElement(side);
   const selected = pane.selected;
   const count = selected.length;
+  const hasLocalRoot = selected.some(function (item) { return Boolean(item.localRootId); });
+
   $(".selection-text", el).textContent = !count ? "0 selected" :
-    count === 1 ? selected[0].name + (selected[0].isDir ? " · folder" : " · " + bytes(selected[0].size)) :
+    count === 1 ? selected[0].name + (selected[0].localRootId ? " · local location" : selected[0].isDir ? " · folder" : " · " + bytes(selected[0].size)) :
     count + " items selected";
 
   $(".download-btn", el).disabled = pane.mode === "browser" || count !== 1 || selected[0]?.isDir;
-  $(".delete-btn", el).disabled = count === 0;
-  $(".rename-btn", el).disabled = count !== 1;
+  $(".delete-btn", el).disabled = count === 0 || hasLocalRoot;
+  $(".rename-btn", el).disabled = count !== 1 || hasLocalRoot;
 
   const other = state.panes[side === "left" ? "right" : "left"];
   const destinationReady = other.mode === "browser" ? Boolean(other.localRoot) : Boolean(other.connectionId);
-  const blocked = count === 0 || selected.some(function (item) { return item.isDir; }) || !destinationReady;
+  const blocked = count === 0 || hasLocalRoot || selected.some(function (item) { return item.isDir; }) || !destinationReady;
   $(".copy-to-other", el).disabled = blocked;
   const centerButton = side === "left" ? $("#copyLeftToRight") : $("#copyRightToLeft");
   if (centerButton) centerButton.disabled = blocked;
@@ -758,14 +897,7 @@ function wirePanes() {
         renderServerSelects();
         await loadPane(side);
       } else {
-        pane.mode = "browser";
-        pane.connectionId = 0;
-        if (!pane.localRoot) {
-          await openLocalDeck(side);
-        } else {
-          renderServerSelects();
-          await loadPane(side);
-        }
+        await showLocalComputer(side);
       }
     });
 
@@ -776,6 +908,8 @@ function wirePanes() {
     $(".local-location-select", el).addEventListener("change", async function (e) {
       if (e.target.value === "__add__") {
         await addLocalLocation(side);
+      } else if (e.target.value === "__thispc__") {
+        await showLocalComputer(side);
       } else if (e.target.value) {
         await selectLocalLocation(side, e.target.value);
       }
@@ -785,8 +919,11 @@ function wirePanes() {
 
     $(".pane-refresh", el).addEventListener("click", function () { loadPane(side); });
     $(".home-btn", el).addEventListener("click", function () {
-      state.panes[side].path = "/";
-      loadPane(side);
+      if (state.panes[side].mode === "browser") showLocalComputer(side);
+      else {
+        state.panes[side].path = "/";
+        loadPane(side);
+      }
     });
     $(".go-btn", el).addEventListener("click", function () {
       state.panes[side].path = normalizePath($(".path-input", el).value);
@@ -796,8 +933,12 @@ function wirePanes() {
       if (e.key === "Enter") $(".go-btn", el).click();
     });
     $(".up-btn", el).addEventListener("click", function () {
-      state.panes[side].path = parentPath(state.panes[side].path);
-      loadPane(side);
+      const pane = state.panes[side];
+      if (pane.mode === "browser" && pane.localRoot && pane.path === "/") showLocalComputer(side);
+      else {
+        pane.path = parentPath(pane.path);
+        loadPane(side);
+      }
     });
 
     $(".upload-btn", el).addEventListener("click", function () {
