@@ -42,12 +42,11 @@
         <span class="pane-letter">L</span>
         <select class="endpoint-type" aria-label="Left endpoint type">
           <option value="remote">Remote server</option>
-          <option value="bridge">Local computer</option>
-          <option value="browser">Browser folder</option>
+          <option value="browser">Local computer</option>
         </select>
         <select class="server-select" aria-label="Left remote server"></select>
-        <select class="local-drive-select hidden" aria-label="Left local drive"></select>
-        <button class="local-pair-btn hidden" type="button">Connect local</button>
+        <select class="local-location-select hidden" aria-label="Left local location"></select>
+        <button class="add-location-btn hidden" type="button">Add location…</button>
         <button class="pane-refresh toolbar-button" type="button" title="Refresh">↻</button>
       </div>
 
@@ -94,12 +93,11 @@
         <span class="pane-letter">R</span>
         <select class="endpoint-type" aria-label="Right endpoint type">
           <option value="remote">Remote server</option>
-          <option value="bridge">Local computer</option>
-          <option value="browser">Browser folder</option>
+          <option value="browser">Local computer</option>
         </select>
         <select class="server-select" aria-label="Right remote server"></select>
-        <select class="local-drive-select hidden" aria-label="Right local drive"></select>
-        <button class="local-pair-btn hidden" type="button">Connect local</button>
+        <select class="local-location-select hidden" aria-label="Right local location"></select>
+        <button class="add-location-btn hidden" type="button">Add location…</button>
         <button class="pane-refresh toolbar-button" type="button" title="Refresh">↻</button>
       </div>
 
@@ -138,36 +136,10 @@
   </main>
 
   <footer class="commander-status">
-    <span id="localBridgeStatus">Local Bridge: not connected</span>
+    <span id="localLocationStatus">Local locations are stored in this browser</span>
     <span class="status-separator"></span>
     <span>SimpleSCP {{.Version}}</span>
   </footer>
-
-  <dialog id="localBridgeDialog" class="local-bridge-dialog">
-    <div class="dialog-head">
-      <div>
-        <span class="eyebrow">LOCAL COMPUTER</span>
-        <h2>Connect this computer</h2>
-        <p>Run SimpleSCP Local Bridge on this computer, then enter the pairing code shown in its window.</p>
-      </div>
-      <button type="button" class="icon-btn local-bridge-close" aria-label="Close">×</button>
-    </div>
-    <div id="localBridgeDetected" class="bridge-detected">Checking for Local Bridge…</div>
-    <label>Pairing code
-      <input id="localBridgeCode" maxlength="8" autocomplete="off" spellcheck="false" placeholder="ABCDEFGH">
-    </label>
-    <div id="localBridgeMessage" class="update-message">The helper runs only on 127.0.0.1 and exposes the drives of this computer after pairing.</div>
-    <div class="bridge-downloads">
-      <a href="https://github.com/gigabytegrove/simplescp/releases/download/edge/simplescp-local-windows-amd64.exe">Windows x64</a>
-      <a href="https://github.com/gigabytegrove/simplescp/releases/download/edge/simplescp-local-windows-arm64.exe">Windows ARM64</a>
-      <a href="https://github.com/gigabytegrove/simplescp/releases/download/edge/simplescp-local-linux-amd64">Linux x64</a>
-      <a href="https://github.com/gigabytegrove/simplescp/releases/download/edge/simplescp-local-darwin-arm64">macOS ARM64</a>
-    </div>
-    <div class="dialog-actions">
-      <button type="button" class="ghost local-bridge-close">Cancel</button>
-      <button id="pairLocalBridgeBtn" type="button" class="primary">Pair local computer</button>
-    </div>
-  </dialog>
 
   {{if .IsAdmin}}
   <dialog id="updateDialog" class="update-dialog">
