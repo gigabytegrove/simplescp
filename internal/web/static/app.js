@@ -1123,39 +1123,39 @@ async function remoteResponse(source, item) {
   return response;
 }
 
-async function copyLocalToRemote(source, destination, destinationSide, selected) {
+async function copyDesktopToRemote(source, destination, destinationSide, selected) {
   for (const item of selected) {
-    const handle = item.handle || source.localHandles.get(item.path);
-    if (!handle || handle.kind !== "file") throw new Error("Local file handle is unavailable.");
-    const file = await handle.getFile();
+    const response = await desktopFileResponse(item.path);
+    const blob = await response.blob();
     const form = new FormData();
-    form.append("files", file, item.name);
+    form.append("files", blob, item.name);
     await withTrustRetry(destinationSide, function () {
       return api("/api/connections/" + destination.connectionId + "/upload?path=" + encodeURIComponent(destination.path), { method:"POST", body:form });
     });
   }
 }
 
-async function copyRemoteToLocal(source, destination, selected) {
-  const dir = await localDirectoryForPath(destination, destination.path);
+async function copyRemoteToDesktop(source, destination, selected) {
   for (const item of selected) {
     const response = await remoteResponse(source, item);
-    const destHandle = await dir.getFileHandle(item.name, { create:true });
-    const writable = await destHandle.createWritable();
-    if (response.body && typeof response.body.pipeTo === "function") {
-      await response.body.pipeTo(writable);
-    } else {
-      await writable.write(await response.blob());
-      await writable.close();
-    }
+    const blob = await response.blob();
+    await desktopFetch("/_desktop/file?path=" + encodeURIComponent(desktopJoin(destination.path, item.name)), {
+      method:"PUT",
+      headers:{ "Content-Type":"application/octet-stream" },
+      body:blob
+    });
   }
 }
 
-async function copyLocalToLocal(source, destination, selected) {
-  const dir = await localDirectoryForPath(destination, destination.path);
+async function copyDesktopToDesktop(source, destination, selected) {
   for (const item of selected) {
-    const handle = item.handle || source.localHandles.get(item.path);
-    await copyLocalHandle(handle, dir, item.name);
+    const response = await desktopFileResponse(item.path);
+    const blob = await response.blob();
+    await desktopFetch("/_desktop/file?path=" + encodeURIComponent(desktopJoin(destination.path, item.name)), {
+      method:"PUT",
+      headers:{ "Content-Type":"application/octet-stream" },
+      body:blob
+    });
   }
 }
 
@@ -1164,22 +1164,22 @@ async function copySelected(side) {
   const destinationSide = side === "left" ? "right" : "left";
   const destination = state.panes[destinationSide];
   const selected = source.selected.slice();
-  const destinationReady = destination.mode === "browser" ? Boolean(destination.localRoot) : Boolean(destination.connectionId);
+  const destinationReady = destination.mode === "desktop" ? Boolean(destination.localRootId) : Boolean(destination.connectionId);
 
-  if (!selected.length || selected.some(function (item) { return item.isDir; }) || !destinationReady) return;
+  if (!selected.length || selected.some(function (item) { return item.isDir || item.localRootId; }) || !destinationReady) return;
 
   setStatus("Copying " + selected.length + " file" + (selected.length === 1 ? "" : "s") + "…", "busy");
-  const sourceLabel = source.mode === "browser" ? (source.localRootName || "Local computer") : (connectionById(source.connectionId)?.name || "server");
-  const destinationLabel = destination.mode === "browser" ? (destination.localRootName || "Local computer") : (connectionById(destination.connectionId)?.name || "server");
+  const sourceLabel = source.mode === "desktop" ? (source.localRootName || "Local computer") : (connectionById(source.connectionId)?.name || "server");
+  const destinationLabel = destination.mode === "desktop" ? (destination.localRootName || "Local computer") : (connectionById(destination.connectionId)?.name || "server");
   const activityId = addActivity("copy", "Transfer", sourceLabel + " → " + destinationLabel, "busy");
 
   try {
-    if (source.mode === "browser" && destination.mode === "remote") {
-      await copyLocalToRemote(source, destination, destinationSide, selected);
-    } else if (source.mode === "remote" && destination.mode === "browser") {
-      await copyRemoteToLocal(source, destination, selected);
-    } else if (source.mode === "browser" && destination.mode === "browser") {
-      await copyLocalToLocal(source, destination, selected);
+    if (source.mode === "desktop" && destination.mode === "remote") {
+      await copyDesktopToRemote(source, destination, destinationSide, selected);
+    } else if (source.mode === "remote" && destination.mode === "desktop") {
+      await copyRemoteToDesktop(source, destination, selected);
+    } else if (source.mode === "desktop" && destination.mode === "desktop") {
+      await copyDesktopToDesktop(source, destination, selected);
     } else {
       for (const item of selected) {
         await api("/api/transfer", {
@@ -1666,7 +1666,8 @@ document.addEventListener("DOMContentLoaded", async function () {
   $("#logoutBtn").addEventListener("click", logout);
   $("#refreshConnections").addEventListener("click", loadConnections);
   try {
-    await Promise.all([loadConnections(), loadLocalLocations()]);
+    await loadConnections();
+    await detectDesktop();
     renderServerSelects();
     await Promise.all([loadPane("left"), loadPane("right")]);
     setStatus("Ready", "ready");
