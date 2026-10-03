@@ -299,15 +299,6 @@ label small{color:#777f86;font-size:10px}
 .update-status-grid span{display:block;font-size:10px;color:#737a80;text-transform:uppercase}
 .update-status-grid strong{display:block;margin-top:3px;font-family:Consolas,monospace;font-size:11px}
 
-.local-bridge-dialog label{padding:0 14px 12px}
-.bridge-detected{margin:12px 14px;padding:8px;border:1px solid #c3c9cf;background:#fff;font-size:11px}
-.bridge-downloads{
-  display:flex;flex-wrap:wrap;gap:5px;padding:0 14px 12px
-}
-.bridge-downloads a{
-  padding:5px 7px;border:1px solid #aeb5bd;background:#fff;color:#225c97;text-decoration:none;font-size:11px
-}
-.bridge-downloads a:hover{background:#eef5fd}
 
 .toast-host{position:fixed;right:10px;bottom:34px;z-index:100;display:flex;flex-direction:column;gap:5px}
 .toast{min-width:250px;max-width:380px;padding:8px 10px;border:1px solid #676f77;background:#fff;box-shadow:var(--shadow);font-size:12px}
