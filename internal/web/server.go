@@ -577,7 +577,7 @@ func (a *app) transferRemote(w http.ResponseWriter,r *http.Request) {
 }
 
 func (a *app) updateStatus(w http.ResponseWriter, r *http.Request) {
-	status, err := a.updater.Status(r.Context(), buildinfo.Version, buildinfo.Commit)
+	status, err := a.updater.Status(r.Context(), buildinfo.Version, buildinfo.Commit, buildinfo.BuildTime)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
