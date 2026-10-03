@@ -194,3 +194,21 @@ To build a local development image:
 ```bash
 docker build -t simplescp:dev .
 ```
+
+
+## Automatic updates
+
+SimpleSCP can update itself from GitHub without rebuilding the Docker container.
+
+By default, `SIMPLE_SCP_AUTO_UPDATE=true`. Source/main builds follow the automatically published `edge` release generated from the latest successful `main` workflow. Tagged production builds follow the latest stable GitHub release.
+
+The running container checks for updates every 15 minutes by default, verifies the published SHA-256 checksum, stages the new executable under `/data/update/`, and gracefully restarts. The immutable container launcher automatically starts the updated executable from the persistent `/data` volume.
+
+Configuration:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `SIMPLE_SCP_AUTO_UPDATE` | `true` | Automatically check, verify, install, and restart onto GitHub-published updates |
+| `SIMPLE_SCP_AUTO_UPDATE_INTERVAL` | `15m` | Update polling interval (minimum 5 minutes) |
+
+This updater does not require the Docker socket, Watchtower, a sidecar, or a second Docker container.
