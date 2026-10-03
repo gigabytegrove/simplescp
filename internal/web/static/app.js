@@ -323,13 +323,13 @@ function renderBreadcrumbs(side) {
 
   if (pane.mode === "browser") {
     if (!pane.localRoot) {
-      host.innerHTML = '<button type="button" class="breadcrumb current" data-local-home="1">This PC</button>';
+      host.innerHTML = '<button type="button" class="breadcrumb current" data-local-home="1">Local roots</button>';
       return;
     }
 
     const parts = normalizePath(pane.path).split("/").filter(Boolean);
     const crumbs = [
-      { label:"This PC", action:"home" },
+      { label:"Local roots", action:"home" },
       { label:pane.localRootName || "Local location", path:"/" }
     ];
     let current = "";
@@ -561,11 +561,11 @@ function renderServerSelects() {
     server.innerHTML = serverHTML;
 
     const locations = $(".local-location-select", paneEl);
-    let localHTML = '<option value="__thispc__"' + (pane.mode === "browser" && !pane.localRoot ? " selected" : "") + '>This PC</option>';
+    let localHTML = '<option value="__thispc__"' + (pane.mode === "browser" && !pane.localRoot ? " selected" : "") + '>Local roots</option>';
     state.localLocations.forEach(function (item) {
       localHTML += '<option value="' + escapeHTML(item.id) + '"' + (pane.mode === "browser" && pane.localRootId === item.id ? " selected" : "") + '>' + escapeHTML(item.name) + '</option>';
     });
-    localHTML += '<option value="__add__">＋ Add drive or folder…</option>';
+    localHTML += '<option value="__add__">＋ Add local root…</option>';
     locations.innerHTML = localHTML;
   });
 }
@@ -614,7 +614,7 @@ function updatePaneModeUI(side) {
   $(".local-location-select", el).classList.toggle("hidden", !local);
   $(".add-location-btn", el).classList.toggle("hidden", !local);
   $(".path-prefix", el).textContent = local ? "local" : "sftp";
-  $(".path-input", el).value = localHome ? "This PC" : pane.path;
+  $(".path-input", el).value = localHome ? "Local roots" : pane.path;
   $(".path-input", el).readOnly = localHome;
   $(".upload-btn", el).textContent = local ? "Import" : "Upload";
   $(".mkdir-btn", el).disabled = localHome;
@@ -636,7 +636,7 @@ async function loadLocalPane(side) {
       return { name:item.name, path:virtualPath, is_dir:true, size:0, mod_time:null, local_root_id:item.id };
     });
 
-    $(".path-input", el).value = "This PC";
+    $(".path-input", el).value = "Local roots";
     renderBreadcrumbs(side);
 
     if (!entries.length) {
@@ -644,7 +644,7 @@ async function loadLocalPane(side) {
         '<tr class="local-welcome-row"><td colspan="3"><div class="local-welcome">' +
         '<div class="local-welcome-icon">⌂</div><strong>No local locations yet</strong>' +
         '<span>Add a drive or folder once, then choose “Allow on every visit” so SimpleSCP can keep it available.</span>' +
-        '<button type="button" class="local-welcome-add">Add drive or folder…</button>' +
+        '<button type="button" class="local-welcome-add">Add local root…</button>' +
         '</div></td></tr>';
       $(".local-welcome-add", tbody)?.addEventListener("click", function () { addLocalLocation(side); });
     } else {
@@ -756,7 +756,7 @@ function renderEntries(side, entries) {
   const tbody = $(".file-list", el);
 
   if (!entries.length) {
-    tbody.innerHTML = '<tr><td colspan="3" class="muted empty-pane-message"><strong>This folder is empty</strong><span>There are no items in this location.</span></td></tr>';
+    tbody.innerHTML = '<tr><td colspan="3" class="muted empty-pane-message"><strong>This location is empty</strong><span>There are no items in this location.</span></td></tr>';
     return;
   }
 
