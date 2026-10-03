@@ -27,7 +27,7 @@
       <div id="status" class="status ready" role="status" aria-live="polite">
         <span class="status-dot"></span><span>Ready</span>
       </div>
-      {{if .IsAdmin}}<button id="updateBtn" class="update-button" type="button">{{.Version}}</button>{{end}}
+      {{if .IsAdmin}}<button id="desktopAdminBtn" class="update-button" type="button">Desktops</button><button id="updateBtn" class="update-button" type="button">{{.Version}}</button>{{end}}
       <span class="signed-user">{{.Username}}</span>
       <button id="logoutBtn" class="signout-button" type="button">Sign out</button>
     </div>
@@ -165,10 +165,36 @@
   </main>
 
   <footer class="app-footer">
-    <span id="localLocationStatus">Local roots are stored in this browser</span>
+    <span id="localLocationStatus">Local computer: open through SimpleSCP Desktop</span>
     <span class="footer-spacer"></span>
     <span>SimpleSCP {{.Version}}</span>
   </footer>
+
+  {{if .IsAdmin}}
+  <dialog id="desktopAdminDialog" class="desktop-admin-dialog">
+    <div class="dialog-head">
+      <div>
+        <span class="eyebrow">DESKTOP CONTROL PLANE</span>
+        <h2>SimpleSCP Desktops</h2>
+        <p>Manage enrolled Windows/Linux desktops, discovered locations, and per-user filesystem ACLs.</p>
+      </div>
+      <button type="button" class="icon-btn desktop-admin-close" aria-label="Close">×</button>
+    </div>
+    <div class="desktop-admin-toolbar">
+      <div>
+        <strong id="desktopAdminSummary">Loading desktops…</strong>
+        <span>Desktop applications check in while they are open.</span>
+      </div>
+      <button id="desktopAdminRefresh" type="button">Refresh</button>
+    </div>
+    <div id="desktopAdminList" class="desktop-admin-list">
+      <div class="desktop-admin-empty">Loading desktop inventory…</div>
+    </div>
+    <div class="dialog-actions">
+      <button type="button" class="ghost desktop-admin-close">Close</button>
+    </div>
+  </dialog>
+  {{end}}
 
   {{if .IsAdmin}}
   <dialog id="updateDialog" class="update-dialog">
