@@ -27,7 +27,7 @@
       <div id="status" class="status ready" role="status" aria-live="polite">
         <span class="status-dot"></span><span>Ready</span>
       </div>
-      {{if .IsAdmin}}<button id="desktopAdminBtn" class="update-button" type="button">Desktops</button><button id="updateBtn" class="update-button" type="button">{{.Version}}</button>{{end}}
+      {{if .IsAdmin}}<button id="desktopAdminBtn" class="update-button" type="button">Desktops</button><button id="settingsBtn" class="update-button" type="button">Settings</button><button id="updateBtn" class="update-button" type="button">{{.Version}}</button>{{end}}
       <span class="signed-user">{{.Username}}</span>
       <button id="logoutBtn" class="signout-button" type="button">Sign out</button>
     </div>
@@ -195,6 +195,84 @@
     <div class="dialog-actions">
       <button type="button" class="ghost desktop-admin-close">Close</button>
     </div>
+  </dialog>
+  {{end}}
+
+  {{if .IsAdmin}}
+  <dialog id="settingsDialog" class="settings-dialog">
+    <form id="settingsForm" method="dialog">
+      <div class="dialog-head">
+        <div>
+          <span class="eyebrow">SERVER SETTINGS</span>
+          <h2>SimpleSCP settings</h2>
+          <p>Runtime configuration is stored in the SimpleSCP database and applies without editing Docker environment variables.</p>
+        </div>
+        <button type="button" class="icon-btn settings-close" aria-label="Close">×</button>
+      </div>
+
+      <div class="settings-body">
+        <section class="settings-section">
+          <div class="settings-section-head">
+            <div><strong>Security & sessions</strong><span>Authentication and browser session behavior.</span></div>
+          </div>
+          <div class="settings-grid">
+            <label class="setting-toggle span-2">
+              <input id="settingCookieSecure" type="checkbox">
+              <span><strong>Require HTTPS-only session cookies</strong><small>Enable when SimpleSCP is served through HTTPS. Also enables HSTS.</small></span>
+            </label>
+            <label>Session lifetime
+              <div class="number-with-unit"><input id="settingSessionHours" type="number" min="0.25" max="720" step="0.25" required><span>hours</span></div>
+            </label>
+            <label>SSH connection timeout
+              <div class="number-with-unit"><input id="settingSSHTimeout" type="number" min="1" max="300" step="1" required><span>seconds</span></div>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="settings-section-head">
+            <div><strong>Transfers</strong><span>Resource limits for browser and server transfers.</span></div>
+          </div>
+          <div class="settings-grid">
+            <label>Maximum upload size
+              <div class="number-with-unit"><input id="settingMaxUploadGB" type="number" min="0.001" max="1024" step="0.1" required><span>GiB</span></div>
+            </label>
+            <label>Concurrent transfers
+              <div class="number-with-unit"><input id="settingConcurrentTransfers" type="number" min="1" max="64" step="1" required><span>jobs</span></div>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <div class="settings-section-head">
+            <div><strong>Login protection</strong><span>Rate-limit repeated sign-in attempts.</span></div>
+          </div>
+          <div class="settings-grid">
+            <label>Attempts per window
+              <div class="number-with-unit"><input id="settingLoginAttempts" type="number" min="3" max="100" step="1" required><span>attempts</span></div>
+            </label>
+            <label>Rate-limit window
+              <div class="number-with-unit"><input id="settingLoginWindow" type="number" min="1" max="1440" step="1" required><span>minutes</span></div>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section update-policy-card">
+          <div class="settings-section-head">
+            <div><strong>Updates</strong><span>Installation policy is intentionally not configurable.</span></div>
+          </div>
+          <div class="manual-update-policy">
+            <span class="manual-update-lock">✓</span>
+            <div><strong>Manual installation only</strong><p>SimpleSCP never downloads, installs, or restarts onto a new version unless an administrator explicitly presses <b>Install update</b>.</p></div>
+          </div>
+        </section>
+      </div>
+
+      <div class="dialog-actions">
+        <button type="button" class="ghost settings-close">Cancel</button>
+        <button id="settingsSaveBtn" type="submit" class="primary">Save settings</button>
+      </div>
+    </form>
   </dialog>
   {{end}}
 
