@@ -73,12 +73,13 @@ type accessTicket struct {
 }
 
 type desktopApp struct {
-	mu         sync.RWMutex
-	cfg        config
-	configPath string
-	token      string
-	proxy      *httputil.ReverseProxy
-	target     *url.URL
+	mu            sync.RWMutex
+	heartbeatOnce sync.Once
+	cfg           config
+	configPath    string
+	token         string
+	proxy         *httputil.ReverseProxy
+	target        *url.URL
 }
 
 func main() {
@@ -144,7 +145,7 @@ func main() {
 	fmt.Println("Close this application to remove local filesystem access.")
 
 	if cfg.ServerURL != "" {
-		go app.heartbeatLoop()
+		app.startHeartbeat()
 	}
 
 	go func() {
@@ -396,6 +397,7 @@ func (a *desktopApp) handleConfig(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "unable to save configuration")
 		return
 	}
+	a.startHeartbeat()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -412,6 +414,12 @@ func (a *desktopApp) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"device_id":  a.cfg.DeviceID,
 		"device_name": a.cfg.Name,
 		"roots":      enumerateRoots(),
+	})
+}
+
+func (a *desktopApp) startHeartbeat() {
+	a.heartbeatOnce.Do(func() {
+		go a.heartbeatLoop()
 	})
 }
 
