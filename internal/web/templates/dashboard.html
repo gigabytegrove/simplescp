@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="csrf-token" content="{{.CSRF}}">
   <title>SimpleSCP</title>
-  <link rel="stylesheet" href="/static/app.css">
-  <link rel="stylesheet" href="/static/production.css">
+  <link rel="stylesheet" href="/static/app.css?v={{.Version}}">
+  <link rel="stylesheet" href="/static/production.css?v={{.Version}}">
 </head>
 <body class="commander-body">
   <header class="window-bar">
@@ -241,6 +241,6 @@
   </section>
 
   <div id="toastHost" class="toast-host"></div>
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js?v={{.Version}}" defer></script>
 </body>
 </html>
