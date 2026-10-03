@@ -687,15 +687,20 @@ FROM desktop_roots WHERE device_id=? ORDER BY path COLLATE NOCASE`, deviceID)
 	return out, rows.Err()
 }
 
-func (s *Store) UpdateDesktopRoot(rootID int64, enabled bool) error {
-	res, err := s.db.Exec("UPDATE desktop_roots SET enabled=? WHERE id=?", boolInt(enabled), rootID)
+func (s *Store) UpdateDesktopRoot(deviceID, rootID int64, enabled bool) error {
+	res, err := s.db.Exec("UPDATE desktop_roots SET enabled=? WHERE id=? AND device_id=?", boolInt(enabled), rootID, deviceID)
 	if err != nil { return err }
 	n,_ := res.RowsAffected()
 	if n != 1 { return sql.ErrNoRows }
 	return nil
 }
 
-func (s *Store) SetDesktopACL(rootID, userID int64, acl DesktopACL) error {
+func (s *Store) SetDesktopACL(deviceID, rootID, userID int64, acl DesktopACL) error {
+	var count int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM desktop_roots WHERE id=? AND device_id=?", rootID, deviceID).Scan(&count); err != nil {
+		return err
+	}
+	if count != 1 { return sql.ErrNoRows }
 	_, err := s.db.Exec(`
 INSERT INTO desktop_acl(root_id,user_id,can_read,can_write,can_rename,can_delete)
 VALUES(?,?,?,?,?,?)
