@@ -91,7 +91,7 @@ func main() {
 				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 				defer cancel()
 
-				status, err := updateManager.Status(ctx, buildinfo.Version, buildinfo.Commit)
+				status, err := updateManager.Status(ctx, buildinfo.Version, buildinfo.Commit, buildinfo.BuildTime)
 				if err != nil {
 					logger.Warn("automatic update check failed", "error", err)
 					return false
