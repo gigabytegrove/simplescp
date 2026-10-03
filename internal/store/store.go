@@ -633,6 +633,8 @@ func (s *Store) SyncDesktopRoots(deviceID int64, roots []DesktopInventory) error
 	defer tx.Rollback()
 
 	now := time.Now().UTC()
+	var ownerUserID int64
+	if err := tx.QueryRow("SELECT owner_user_id FROM desktop_devices WHERE id=?", deviceID).Scan(&ownerUserID); err != nil { return err }
 	if _, err := tx.Exec("UPDATE desktop_roots SET online=0 WHERE device_id=?", deviceID); err != nil { return err }
 	for _, root := range roots {
 		root.Name = strings.TrimSpace(root.Name)
@@ -651,6 +653,13 @@ ON CONFLICT(device_id,path) DO UPDATE SET
 	free_bytes=excluded.free_bytes,online=1,last_seen=excluded.last_seen`,
 			deviceID, root.Name, root.Path, root.Kind, root.Detail, root.TotalBytes, root.FreeBytes, now)
 		if err != nil { return err }
+
+		var rootID int64
+		if err := tx.QueryRow("SELECT id FROM desktop_roots WHERE device_id=? AND path=?", deviceID, root.Path).Scan(&rootID); err != nil { return err }
+		if _, err := tx.Exec(`
+INSERT INTO desktop_acl(root_id,user_id,can_read,can_write,can_rename,can_delete)
+VALUES(?,?,1,1,1,1)
+ON CONFLICT(root_id,user_id) DO NOTHING`, rootID, ownerUserID); err != nil { return err }
 	}
 	if _, err := tx.Exec("UPDATE desktop_devices SET last_seen=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", now, deviceID); err != nil { return err }
 	return tx.Commit()
@@ -724,16 +733,12 @@ func (s *Store) EffectiveDesktopRoots(deviceID, userID int64) ([]DesktopRootAcce
 		access := DesktopRootAccess{DesktopRoot:root}
 		access.RootID = root.ID
 		access.UserID = userID
-		if userID == d.OwnerUserID {
-			access.CanRead=true; access.CanWrite=true; access.CanRename=true; access.CanDelete=true
-		} else {
-			var rr,ww,nn,dd int
-			err := s.db.QueryRow("SELECT can_read,can_write,can_rename,can_delete FROM desktop_acl WHERE root_id=? AND user_id=?", root.ID,userID).
-				Scan(&rr,&ww,&nn,&dd)
-			if errors.Is(err,sql.ErrNoRows) { continue }
-			if err != nil { return nil,err }
-			access.CanRead=rr==1; access.CanWrite=ww==1; access.CanRename=nn==1; access.CanDelete=dd==1
-		}
+		var rr,ww,nn,dd int
+		err := s.db.QueryRow("SELECT can_read,can_write,can_rename,can_delete FROM desktop_acl WHERE root_id=? AND user_id=?", root.ID,userID).
+			Scan(&rr,&ww,&nn,&dd)
+		if errors.Is(err,sql.ErrNoRows) { continue }
+		if err != nil { return nil,err }
+		access.CanRead=rr==1; access.CanWrite=ww==1; access.CanRename=nn==1; access.CanDelete=dd==1
 		if access.CanRead || access.CanWrite || access.CanRename || access.CanDelete {
 			out = append(out, access)
 		}
