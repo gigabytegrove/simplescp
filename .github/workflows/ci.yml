@@ -98,7 +98,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   live-release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !contains(github.event.head_commit.message, '[no-live]')
     needs: test
     runs-on: ubuntu-latest
     permissions:
@@ -113,7 +113,23 @@ jobs:
           go-version: "1.27.1"
           cache: true
 
+      - name: Wait for main to settle
+        id: settle
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 60
+          LATEST="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          if [ "$LATEST" = "$GITHUB_SHA" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "main is settled on $GITHUB_SHA"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping Live release because main advanced to $LATEST"
+          fi
+
       - name: Build Live updater assets
+        if: steps.settle.outputs.publish == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -135,6 +151,7 @@ jobs:
           )
 
       - name: Publish Live release
+        if: steps.settle.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -147,6 +164,7 @@ jobs:
             --notes "Live release from main at commit $GITHUB_SHA."
 
       - name: Publish legacy updater bootstrap
+        if: steps.settle.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -159,6 +177,7 @@ jobs:
             --notes "Compatibility bootstrap for older Edge-channel containers. The binary itself is $LIVE_TAG."
 
       - name: Remove obsolete Edge releases
+        if: steps.settle.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
