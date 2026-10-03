@@ -1463,9 +1463,10 @@ function renderDesktopAdmin(data) {
 
   all(".desktop-root-card", host).forEach(function (rootCard) {
     const rootId = Number(rootCard.dataset.rootId);
+    const deviceId = Number(rootCard.closest(".desktop-device-card").dataset.deviceId);
     $(".root-enabled", rootCard).addEventListener("change", async function () {
       try {
-        await api("/api/admin/desktops/0/roots/" + rootId, {
+        await api("/api/admin/desktops/" + deviceId + "/roots/" + rootId, {
           method:"PUT",
           body:{enabled:this.checked}
         });
@@ -1482,12 +1483,13 @@ function renderDesktopAdmin(data) {
       box.addEventListener("change", async function () {
         const rootId = Number(row.dataset.rootId);
         const userId = Number(row.dataset.userId);
+        const deviceId = Number(row.closest(".desktop-device-card").dataset.deviceId);
         const body = {};
         all('input[type="checkbox"]', row).forEach(function (input) {
           body[input.dataset.perm] = input.checked;
         });
         try {
-          await api("/api/admin/desktops/0/roots/" + rootId + "/acl/" + userId, { method:"PUT", body:body });
+          await api("/api/admin/desktops/" + deviceId + "/roots/" + rootId + "/acl/" + userId, { method:"PUT", body:body });
         } catch (err) {
           toast(err.message, "error");
           await loadDesktopAdmin();
