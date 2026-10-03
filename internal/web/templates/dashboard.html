@@ -183,7 +183,11 @@
         <strong id="desktopAdminSummary">Loading desktops…</strong>
         <span>Desktop applications check in while they are open.</span>
       </div>
-      <button id="desktopAdminRefresh" type="button">Refresh</button>
+      <div class="desktop-admin-tools">
+        <a href="https://github.com/gigabytegrove/simplescp/releases/download/{{.Version}}/simplescp-desktop-windows-amd64.exe">Windows x64</a>
+        <a href="https://github.com/gigabytegrove/simplescp/releases/download/{{.Version}}/simplescp-desktop-linux-amd64">Linux x64</a>
+        <button id="desktopAdminRefresh" type="button">Refresh</button>
+      </div>
     </div>
     <div id="desktopAdminList" class="desktop-admin-list">
       <div class="desktop-admin-empty">Loading desktop inventory…</div>
