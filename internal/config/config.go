@@ -24,6 +24,8 @@ type Config struct {
 	MaxConcurrentTransfers int
 	LoginMaxAttempts       int
 	LoginWindow            time.Duration
+	AutoUpdate             bool
+	AutoUpdateInterval     time.Duration
 }
 
 func Load() (Config, error) {
@@ -81,6 +83,15 @@ func Load() (Config, error) {
 	cfg.LoginWindow, err = time.ParseDuration(env("SIMPLE_SCP_LOGIN_WINDOW", "15m"))
 	if err != nil || cfg.LoginWindow < time.Minute || cfg.LoginWindow > 24*time.Hour {
 		return Config{}, errors.New("SIMPLE_SCP_LOGIN_WINDOW must be between 1m and 24h")
+	}
+
+	cfg.AutoUpdate, err = strconv.ParseBool(env("SIMPLE_SCP_AUTO_UPDATE", "true"))
+	if err != nil {
+		return Config{}, fmt.Errorf("invalid SIMPLE_SCP_AUTO_UPDATE: %w", err)
+	}
+	cfg.AutoUpdateInterval, err = time.ParseDuration(env("SIMPLE_SCP_AUTO_UPDATE_INTERVAL", "15m"))
+	if err != nil || cfg.AutoUpdateInterval < 5*time.Minute || cfg.AutoUpdateInterval > 24*time.Hour {
+		return Config{}, errors.New("SIMPLE_SCP_AUTO_UPDATE_INTERVAL must be between 5m and 24h")
 	}
 
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
