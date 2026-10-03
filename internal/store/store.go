@@ -54,6 +54,57 @@ type Connection struct {
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
+type DesktopDevice struct {
+	ID          int64      `json:"id"`
+	DeviceUID   string     `json:"device_uid"`
+	OwnerUserID int64      `json:"owner_user_id"`
+	OwnerName   string     `json:"owner_name,omitempty"`
+	Name        string     `json:"name"`
+	Platform    string     `json:"platform"`
+	Arch        string     `json:"arch"`
+	Enabled     bool       `json:"enabled"`
+	LastSeen    *time.Time `json:"last_seen,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
+}
+
+type DesktopRoot struct {
+	ID         int64      `json:"id"`
+	DeviceID   int64      `json:"device_id"`
+	Name       string     `json:"name"`
+	Path       string     `json:"path"`
+	Kind       string     `json:"kind"`
+	Detail     string     `json:"detail,omitempty"`
+	TotalBytes uint64     `json:"total_bytes,omitempty"`
+	FreeBytes  uint64     `json:"free_bytes,omitempty"`
+	Online     bool       `json:"online"`
+	Enabled    bool       `json:"enabled"`
+	LastSeen   *time.Time `json:"last_seen,omitempty"`
+}
+
+type DesktopACL struct {
+	RootID    int64 `json:"root_id"`
+	UserID    int64 `json:"user_id"`
+	CanRead   bool  `json:"can_read"`
+	CanWrite  bool  `json:"can_write"`
+	CanRename bool  `json:"can_rename"`
+	CanDelete bool  `json:"can_delete"`
+}
+
+type DesktopRootAccess struct {
+	DesktopRoot
+	DesktopACL
+}
+
+type DesktopInventory struct {
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	Kind       string `json:"kind"`
+	Detail     string `json:"detail,omitempty"`
+	TotalBytes uint64 `json:"total_bytes,omitempty"`
+	FreeBytes  uint64 `json:"free_bytes,omitempty"`
+}
+
 type secretPayload struct {
 	Password   string `json:"password,omitempty"`
 	PrivateKey string `json:"private_key,omitempty"`
@@ -118,6 +169,49 @@ CREATE TABLE IF NOT EXISTS connections (
 	UNIQUE(user_id, name)
 );
 CREATE INDEX IF NOT EXISTS idx_connections_user ON connections(user_id);
+
+CREATE TABLE IF NOT EXISTS desktop_devices (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	device_uid TEXT NOT NULL UNIQUE,
+	owner_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	platform TEXT NOT NULL,
+	arch TEXT NOT NULL,
+	secret_hash BLOB NOT NULL,
+	encrypted_secret TEXT NOT NULL,
+	enabled INTEGER NOT NULL DEFAULT 1,
+	last_seen DATETIME,
+	created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_desktop_devices_owner ON desktop_devices(owner_user_id);
+
+CREATE TABLE IF NOT EXISTS desktop_roots (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	device_id INTEGER NOT NULL REFERENCES desktop_devices(id) ON DELETE CASCADE,
+	name TEXT NOT NULL,
+	path TEXT NOT NULL,
+	kind TEXT NOT NULL DEFAULT 'drive',
+	detail TEXT NOT NULL DEFAULT '',
+	total_bytes INTEGER NOT NULL DEFAULT 0,
+	free_bytes INTEGER NOT NULL DEFAULT 0,
+	online INTEGER NOT NULL DEFAULT 1,
+	enabled INTEGER NOT NULL DEFAULT 1,
+	last_seen DATETIME,
+	UNIQUE(device_id, path)
+);
+CREATE INDEX IF NOT EXISTS idx_desktop_roots_device ON desktop_roots(device_id);
+
+CREATE TABLE IF NOT EXISTS desktop_acl (
+	root_id INTEGER NOT NULL REFERENCES desktop_roots(id) ON DELETE CASCADE,
+	user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+	can_read INTEGER NOT NULL DEFAULT 0,
+	can_write INTEGER NOT NULL DEFAULT 0,
+	can_rename INTEGER NOT NULL DEFAULT 0,
+	can_delete INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY(root_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_desktop_acl_user ON desktop_acl(user_id);
 `)
 	if err != nil {
 		return fmt.Errorf("migrate database: %w", err)
@@ -381,4 +475,268 @@ func (s *Store) DeleteConnection(userID, id int64) error {
 	n, _ := res.RowsAffected()
 	if n != 1 { return sql.ErrNoRows }
 	return nil
+}
+
+func (s *Store) ListUsers() ([]User, error) {
+	rows, err := s.db.Query("SELECT id,username,is_admin FROM users ORDER BY username COLLATE NOCASE")
+	if err != nil { return nil, err }
+	defer rows.Close()
+	var out []User
+	for rows.Next() {
+		var u User
+		var admin int
+		if err := rows.Scan(&u.ID, &u.Username, &admin); err != nil { return nil, err }
+		u.IsAdmin = admin == 1
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}
+
+func validateDesktopIdentity(uid, secret string) error {
+	if len(strings.TrimSpace(uid)) < 16 || len(uid) > 128 {
+		return errors.New("invalid desktop device id")
+	}
+	if len(strings.TrimSpace(secret)) < 32 || len(secret) > 512 {
+		return errors.New("invalid desktop secret")
+	}
+	return nil
+}
+
+func (s *Store) EnrollDesktop(ownerUserID int64, uid, secret, name, platform, arch string) (DesktopDevice, error) {
+	uid = strings.TrimSpace(uid)
+	secret = strings.TrimSpace(secret)
+	name = strings.TrimSpace(name)
+	platform = strings.TrimSpace(platform)
+	arch = strings.TrimSpace(arch)
+	if err := validateDesktopIdentity(uid, secret); err != nil { return DesktopDevice{}, err }
+	if name == "" { name = "SimpleSCP Desktop" }
+	if len(name) > 128 || len(platform) > 32 || len(arch) > 32 {
+		return DesktopDevice{}, errors.New("desktop metadata is too long")
+	}
+
+	var existingID, existingOwner int64
+	var existingHash []byte
+	err := s.db.QueryRow("SELECT id,owner_user_id,secret_hash FROM desktop_devices WHERE device_uid=?", uid).
+		Scan(&existingID, &existingOwner, &existingHash)
+	if err == nil {
+		if existingOwner != ownerUserID {
+			return DesktopDevice{}, errors.New("desktop is already enrolled to another user")
+		}
+		if subtleConstantCompare(existingHash, tokenHash(secret)) == false {
+			return DesktopDevice{}, errors.New("desktop identity could not be verified")
+		}
+		_, err = s.db.Exec(`UPDATE desktop_devices SET name=?,platform=?,arch=?,last_seen=?,updated_at=CURRENT_TIMESTAMP WHERE id=?`,
+			name, platform, arch, time.Now().UTC(), existingID)
+		if err != nil { return DesktopDevice{}, err }
+		return s.GetDesktop(existingID)
+	}
+	if !errors.Is(err, sql.ErrNoRows) { return DesktopDevice{}, err }
+
+	encrypted, err := s.vault.Encrypt([]byte(secret))
+	if err != nil { return DesktopDevice{}, err }
+	res, err := s.db.Exec(`
+INSERT INTO desktop_devices(device_uid,owner_user_id,name,platform,arch,secret_hash,encrypted_secret,last_seen)
+VALUES(?,?,?,?,?,?,?,?)`, uid, ownerUserID, name, platform, arch, tokenHash(secret), encrypted, time.Now().UTC())
+	if err != nil { return DesktopDevice{}, err }
+	id, _ := res.LastInsertId()
+	return s.GetDesktop(id)
+}
+
+func subtleConstantCompare(a, b []byte) bool {
+	if len(a) != len(b) { return false }
+	var diff byte
+	for i := range a { diff |= a[i] ^ b[i] }
+	return diff == 0
+}
+
+func (s *Store) GetDesktop(id int64) (DesktopDevice, error) {
+	var d DesktopDevice
+	var enabled int
+	var last sql.NullTime
+	err := s.db.QueryRow(`
+SELECT d.id,d.device_uid,d.owner_user_id,u.username,d.name,d.platform,d.arch,d.enabled,d.last_seen,d.created_at,d.updated_at
+FROM desktop_devices d JOIN users u ON u.id=d.owner_user_id
+WHERE d.id=?`, id).
+		Scan(&d.ID,&d.DeviceUID,&d.OwnerUserID,&d.OwnerName,&d.Name,&d.Platform,&d.Arch,&enabled,&last,&d.CreatedAt,&d.UpdatedAt)
+	if err != nil { return DesktopDevice{}, err }
+	d.Enabled = enabled == 1
+	if last.Valid { t := last.Time; d.LastSeen = &t }
+	return d, nil
+}
+
+func (s *Store) GetDesktopByIdentity(uid, secret string) (DesktopDevice, string, error) {
+	if err := validateDesktopIdentity(uid, secret); err != nil { return DesktopDevice{}, "", err }
+	var id int64
+	var hash []byte
+	var encrypted string
+	err := s.db.QueryRow("SELECT id,secret_hash,encrypted_secret FROM desktop_devices WHERE device_uid=?", strings.TrimSpace(uid)).
+		Scan(&id,&hash,&encrypted)
+	if err != nil { return DesktopDevice{}, "", err }
+	if !subtleConstantCompare(hash, tokenHash(strings.TrimSpace(secret))) {
+		return DesktopDevice{}, "", errors.New("desktop identity could not be verified")
+	}
+	d, err := s.GetDesktop(id)
+	if err != nil { return DesktopDevice{}, "", err }
+	raw, err := s.vault.Decrypt(encrypted)
+	if err != nil { return DesktopDevice{}, "", err }
+	return d, string(raw), nil
+}
+
+func (s *Store) ListDesktops() ([]DesktopDevice, error) {
+	rows, err := s.db.Query(`
+SELECT d.id,d.device_uid,d.owner_user_id,u.username,d.name,d.platform,d.arch,d.enabled,d.last_seen,d.created_at,d.updated_at
+FROM desktop_devices d JOIN users u ON u.id=d.owner_user_id
+ORDER BY d.name COLLATE NOCASE`)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	var out []DesktopDevice
+	for rows.Next() {
+		var d DesktopDevice
+		var enabled int
+		var last sql.NullTime
+		if err := rows.Scan(&d.ID,&d.DeviceUID,&d.OwnerUserID,&d.OwnerName,&d.Name,&d.Platform,&d.Arch,&enabled,&last,&d.CreatedAt,&d.UpdatedAt); err != nil {
+			return nil, err
+		}
+		d.Enabled = enabled == 1
+		if last.Valid { t := last.Time; d.LastSeen = &t }
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateDesktop(id int64, name string, enabled bool) error {
+	name = strings.TrimSpace(name)
+	if name == "" || len(name) > 128 { return errors.New("invalid desktop name") }
+	res, err := s.db.Exec("UPDATE desktop_devices SET name=?,enabled=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", name, boolInt(enabled), id)
+	if err != nil { return err }
+	n,_ := res.RowsAffected()
+	if n != 1 { return sql.ErrNoRows }
+	return nil
+}
+
+func (s *Store) DeleteDesktop(id int64) error {
+	res, err := s.db.Exec("DELETE FROM desktop_devices WHERE id=?", id)
+	if err != nil { return err }
+	n,_ := res.RowsAffected()
+	if n != 1 { return sql.ErrNoRows }
+	return nil
+}
+
+func boolInt(v bool) int {
+	if v { return 1 }
+	return 0
+}
+
+func (s *Store) SyncDesktopRoots(deviceID int64, roots []DesktopInventory) error {
+	tx, err := s.db.Begin()
+	if err != nil { return err }
+	defer tx.Rollback()
+
+	now := time.Now().UTC()
+	if _, err := tx.Exec("UPDATE desktop_roots SET online=0 WHERE device_id=?", deviceID); err != nil { return err }
+	for _, root := range roots {
+		root.Name = strings.TrimSpace(root.Name)
+		root.Path = strings.TrimSpace(root.Path)
+		root.Kind = strings.TrimSpace(root.Kind)
+		root.Detail = strings.TrimSpace(root.Detail)
+		if root.Name == "" || root.Path == "" || len(root.Path) > 4096 || len(root.Name) > 256 || len(root.Detail) > 2048 {
+			continue
+		}
+		if root.Kind == "" { root.Kind = "drive" }
+		_, err := tx.Exec(`
+INSERT INTO desktop_roots(device_id,name,path,kind,detail,total_bytes,free_bytes,online,enabled,last_seen)
+VALUES(?,?,?,?,?,?,?,1,1,?)
+ON CONFLICT(device_id,path) DO UPDATE SET
+	name=excluded.name,kind=excluded.kind,detail=excluded.detail,total_bytes=excluded.total_bytes,
+	free_bytes=excluded.free_bytes,online=1,last_seen=excluded.last_seen`,
+			deviceID, root.Name, root.Path, root.Kind, root.Detail, root.TotalBytes, root.FreeBytes, now)
+		if err != nil { return err }
+	}
+	if _, err := tx.Exec("UPDATE desktop_devices SET last_seen=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", now, deviceID); err != nil { return err }
+	return tx.Commit()
+}
+
+func (s *Store) ListDesktopRoots(deviceID int64) ([]DesktopRoot, error) {
+	rows, err := s.db.Query(`
+SELECT id,device_id,name,path,kind,detail,total_bytes,free_bytes,online,enabled,last_seen
+FROM desktop_roots WHERE device_id=? ORDER BY path COLLATE NOCASE`, deviceID)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	var out []DesktopRoot
+	for rows.Next() {
+		var r DesktopRoot
+		var online, enabled int
+		var last sql.NullTime
+		if err := rows.Scan(&r.ID,&r.DeviceID,&r.Name,&r.Path,&r.Kind,&r.Detail,&r.TotalBytes,&r.FreeBytes,&online,&enabled,&last); err != nil {
+			return nil, err
+		}
+		r.Online = online == 1
+		r.Enabled = enabled == 1
+		if last.Valid { t := last.Time; r.LastSeen = &t }
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) UpdateDesktopRoot(rootID int64, enabled bool) error {
+	res, err := s.db.Exec("UPDATE desktop_roots SET enabled=? WHERE id=?", boolInt(enabled), rootID)
+	if err != nil { return err }
+	n,_ := res.RowsAffected()
+	if n != 1 { return sql.ErrNoRows }
+	return nil
+}
+
+func (s *Store) SetDesktopACL(rootID, userID int64, acl DesktopACL) error {
+	_, err := s.db.Exec(`
+INSERT INTO desktop_acl(root_id,user_id,can_read,can_write,can_rename,can_delete)
+VALUES(?,?,?,?,?,?)
+ON CONFLICT(root_id,user_id) DO UPDATE SET
+	can_read=excluded.can_read,can_write=excluded.can_write,can_rename=excluded.can_rename,can_delete=excluded.can_delete`,
+		rootID,userID,boolInt(acl.CanRead),boolInt(acl.CanWrite),boolInt(acl.CanRename),boolInt(acl.CanDelete))
+	return err
+}
+
+func (s *Store) ListDesktopACLs(rootID int64) ([]DesktopACL, error) {
+	rows, err := s.db.Query("SELECT root_id,user_id,can_read,can_write,can_rename,can_delete FROM desktop_acl WHERE root_id=? ORDER BY user_id", rootID)
+	if err != nil { return nil, err }
+	defer rows.Close()
+	var out []DesktopACL
+	for rows.Next() {
+		var a DesktopACL
+		var r,w,n,d int
+		if err := rows.Scan(&a.RootID,&a.UserID,&r,&w,&n,&d); err != nil { return nil, err }
+		a.CanRead=r==1; a.CanWrite=w==1; a.CanRename=n==1; a.CanDelete=d==1
+		out = append(out,a)
+	}
+	return out,rows.Err()
+}
+
+func (s *Store) EffectiveDesktopRoots(deviceID, userID int64) ([]DesktopRootAccess, error) {
+	d, err := s.GetDesktop(deviceID)
+	if err != nil { return nil, err }
+	if !d.Enabled { return []DesktopRootAccess{}, nil }
+
+	roots, err := s.ListDesktopRoots(deviceID)
+	if err != nil { return nil, err }
+	out := make([]DesktopRootAccess,0,len(roots))
+	for _, root := range roots {
+		if !root.Enabled || !root.Online { continue }
+		access := DesktopRootAccess{DesktopRoot:root}
+		access.RootID = root.ID
+		access.UserID = userID
+		if userID == d.OwnerUserID {
+			access.CanRead=true; access.CanWrite=true; access.CanRename=true; access.CanDelete=true
+		} else {
+			var rr,ww,nn,dd int
+			err := s.db.QueryRow("SELECT can_read,can_write,can_rename,can_delete FROM desktop_acl WHERE root_id=? AND user_id=?", root.ID,userID).
+				Scan(&rr,&ww,&nn,&dd)
+			if errors.Is(err,sql.ErrNoRows) { continue }
+			if err != nil { return nil,err }
+			access.CanRead=rr==1; access.CanWrite=ww==1; access.CanRename=nn==1; access.CanDelete=dd==1
+		}
+		if access.CanRead || access.CanWrite || access.CanRename || access.CanDelete {
+			out = append(out, access)
+		}
+	}
+	return out,nil
 }
