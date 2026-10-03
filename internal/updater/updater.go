@@ -17,11 +17,7 @@ import (
 	"time"
 )
 
-const (
-	latestReleaseURL  = "https://api.github.com/repos/gigabytegrove/simplescp/releases/latest"
-	edgeReleaseListURL = "https://api.github.com/repos/gigabytegrove/simplescp/releases?per_page=30"
-	legacyEdgeURL      = "https://api.github.com/repos/gigabytegrove/simplescp/releases/tags/edge"
-)
+const latestReleaseURL = "https://api.github.com/repos/gigabytegrove/simplescp/releases/latest"
 
 type Manager struct {
 	dataDir string
@@ -68,40 +64,34 @@ func (m *Manager) updateDir() string { return filepath.Join(m.dataDir, "update")
 func (m *Manager) activePath() string { return filepath.Join(m.updateDir(), "simplescp") }
 func (m *Manager) previousPath() string { return filepath.Join(m.updateDir(), "simplescp.previous") }
 
-func useEdgeChannel(current string) bool {
-	v := strings.ToLower(normalizeVersion(current))
-	return v == "dev" || v == "main" || v == "edge" || strings.HasPrefix(v, "main-") || strings.HasPrefix(v, "edge-")
-}
-
 func (m *Manager) Status(ctx context.Context, current, commit, buildTime string) (Status, error) {
-	rel, err := m.releaseFor(ctx, current)
+	rel, err := m.releaseFor(ctx)
 	if err != nil {
 		return Status{}, err
 	}
+
 	_, rollbackErr := os.Stat(m.previousPath())
 	updateAvailable := normalizeVersion(current) != normalizeVersion(rel.TagName)
-	latestLabel := rel.TagName
-	if useEdgeChannel(current) {
-		latestLabel = rel.TagName
-		trimmedCommit := strings.TrimSpace(commit)
-		if trimmedCommit != "" && trimmedCommit != "unknown" {
-			updateAvailable = !strings.EqualFold(trimmedCommit, strings.TrimSpace(rel.TargetCommitish))
+
+	trimmedCommit := strings.TrimSpace(commit)
+	if trimmedCommit != "" && trimmedCommit != "unknown" && strings.EqualFold(trimmedCommit, strings.TrimSpace(rel.TargetCommitish)) {
+		updateAvailable = false
+	} else if normalizeVersion(current) == "dev" || normalizeVersion(current) == "main" || strings.HasPrefix(strings.ToLower(normalizeVersion(current)), "edge-") {
+		// Source-built and legacy Edge containers should move onto the
+		// published Live channel. If build identity is available, avoid
+		// downgrading a source build newer than the latest Live release.
+		builtAt, builtErr := time.Parse(time.RFC3339, strings.TrimSpace(buildTime))
+		publishedAt, publishedErr := time.Parse(time.RFC3339, strings.TrimSpace(rel.PublishedAt))
+		if builtErr == nil && publishedErr == nil {
+			updateAvailable = publishedAt.After(builtAt) || !strings.EqualFold(trimmedCommit, strings.TrimSpace(rel.TargetCommitish))
 		} else {
-			builtAt, builtErr := time.Parse(time.RFC3339, strings.TrimSpace(buildTime))
-			publishedAt, publishedErr := time.Parse(time.RFC3339, strings.TrimSpace(rel.PublishedAt))
-			if builtErr == nil && publishedErr == nil {
-				updateAvailable = publishedAt.After(builtAt)
-			} else {
-				// Legacy source-built containers did not embed a commit or build
-				// timestamp. Treat an immutable Edge release as an available
-				// bootstrap update rather than incorrectly claiming "Current".
-				updateAvailable = true
-			}
+			updateAvailable = true
 		}
 	}
+
 	return Status{
 		Current: current,
-		Latest: latestLabel,
+		Latest: rel.TagName,
 		UpdateAvailable: updateAvailable,
 		ReleaseURL: rel.HTMLURL,
 		Architecture: runtime.GOARCH,
@@ -113,58 +103,20 @@ func normalizeVersion(v string) string {
 	return strings.TrimPrefix(strings.TrimSpace(v), "v")
 }
 
-func (m *Manager) releaseFor(ctx context.Context, current string) (release, error) {
-	if useEdgeChannel(current) {
-		body, err := m.fetch(ctx, edgeReleaseListURL, 8<<20)
-		if err != nil {
-			return release{}, err
-		}
-		var releases []release
-		if err := json.Unmarshal(body, &releases); err != nil {
-			return release{}, fmt.Errorf("decode edge releases: %w", err)
-		}
-		var newest release
-		var newestTime time.Time
-		for _, rel := range releases {
-			if !rel.Prerelease || !strings.HasPrefix(strings.ToLower(strings.TrimSpace(rel.TagName)), "edge-") {
-				continue
-			}
-			publishedAt, err := time.Parse(time.RFC3339, strings.TrimSpace(rel.PublishedAt))
-			if err != nil {
-				continue
-			}
-			if newest.TagName == "" || publishedAt.After(newestTime) {
-				newest = rel
-				newestTime = publishedAt
-			}
-		}
-		if newest.TagName != "" {
-			return newest, nil
-		}
-
-		// Compatibility fallback for deployments created before immutable
-		// per-build Edge releases were introduced.
-		legacy, err := m.fetch(ctx, legacyEdgeURL, 2<<20)
-		if err != nil {
-			return release{}, errors.New("no published Edge build is available")
-		}
-		var rel release
-		if err := json.Unmarshal(legacy, &rel); err != nil {
-			return release{}, fmt.Errorf("decode legacy edge release: %w", err)
-		}
-		return rel, nil
-	}
-
+func (m *Manager) releaseFor(ctx context.Context) (release, error) {
 	var rel release
 	body, err := m.fetch(ctx, latestReleaseURL, 2<<20)
 	if err != nil {
 		return rel, err
 	}
 	if err := json.Unmarshal(body, &rel); err != nil {
-		return rel, fmt.Errorf("decode latest release: %w", err)
+		return rel, fmt.Errorf("decode latest Live release: %w", err)
 	}
 	if strings.TrimSpace(rel.TagName) == "" {
-		return rel, errors.New("latest release has no tag")
+		return rel, errors.New("latest Live release has no tag")
+	}
+	if rel.Prerelease {
+		return rel, errors.New("latest release is marked as a prerelease")
 	}
 	return rel, nil
 }
@@ -232,7 +184,7 @@ func (m *Manager) Install(ctx context.Context, current string) (InstallResult, e
 		return InstallResult{}, fmt.Errorf("self-update is not published for architecture %s", runtime.GOARCH)
 	}
 
-	rel, err := m.releaseFor(ctx, current)
+	rel, err := m.releaseFor(ctx)
 	if err != nil {
 		return InstallResult{}, err
 	}
