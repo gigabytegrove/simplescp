@@ -8,7 +8,10 @@ RUN apk add --no-cache ca-certificates
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -trimpath -ldflags="-s -w -X github.com/gigabytegrove/simplescp/internal/buildinfo.Version=${VERSION} -X github.com/gigabytegrove/simplescp/internal/buildinfo.Commit=${COMMIT}" -o /out/simplescp ./cmd/simplescp
+RUN BUILDTIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" && \
+    CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -trimpath \
+    -ldflags="-s -w -X github.com/gigabytegrove/simplescp/internal/buildinfo.Version=${VERSION} -X github.com/gigabytegrove/simplescp/internal/buildinfo.Commit=${COMMIT} -X github.com/gigabytegrove/simplescp/internal/buildinfo.BuildTime=${BUILDTIME}" \
+    -o /out/simplescp ./cmd/simplescp
 
 FROM alpine:3.22
 RUN apk add --no-cache ca-certificates tzdata && addgroup -S simplescp && adduser -S -G simplescp -u 10001 simplescp
