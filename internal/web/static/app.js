@@ -12,13 +12,7 @@ const state = {
   selectionAnchor: { left: null, right: null },
   activity: [],
   actionResolver: null,
-  bridge: {
-    base: "http://127.0.0.1:9431",
-    token: localStorage.getItem("simplescp_local_bridge_token") || "",
-    roots: [],
-    info: null,
-    pendingSide: null
-  }
+  localLocations: []
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -30,139 +24,142 @@ function makePaneState() {
     connectionId: 0,
     path: "/",
     selected: [],
-    bridgeRoot: "",
     localRoot: null,
+    localRootId: "",
     localRootName: "",
     localHandles: new Map()
   };
 }
 
-function bridgeSeparator(value) {
-  return String(value || "").includes("\\") ? "\\" : "/";
+function localDeckSupported() {
+  return window.isSecureContext && typeof window.showDirectoryPicker === "function" && "indexedDB" in window;
 }
 
-function bridgeJoin(base, name) {
-  const sep = bridgeSeparator(base);
-  return String(base || "").replace(/[\\/]+$/, "") + sep + String(name || "").replace(/^[\\/]+/, "");
+function openLocalDB() {
+  return new Promise(function (resolve, reject) {
+    const req = indexedDB.open("simplescp-local", 1);
+    req.onupgradeneeded = function () {
+      const db = req.result;
+      if (!db.objectStoreNames.contains("locations")) {
+        db.createObjectStore("locations", { keyPath:"id" });
+      }
+    };
+    req.onsuccess = function () { resolve(req.result); };
+    req.onerror = function () { reject(req.error || new Error("Unable to open local location storage.")); };
+  });
 }
 
-function bridgeParentPath(value) {
-  const raw = String(value || "");
-  if (/^[A-Za-z]:[\\/]?$/.test(raw) || raw === "/") return raw;
-  const sep = bridgeSeparator(raw);
-  const trimmed = raw.replace(/[\\/]+$/, "");
-  const index = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
-  if (index < 0) return raw;
-  if (/^[A-Za-z]:$/.test(trimmed.slice(0, index))) return trimmed.slice(0, index) + sep;
-  return trimmed.slice(0, index) || sep;
-}
-
-async function bridgeFetch(path, options) {
-  const opts = Object.assign({ mode:"cors" }, options || {});
-  opts.headers = Object.assign({}, opts.headers || {});
-  if (state.bridge.token) opts.headers.Authorization = "Bearer " + state.bridge.token;
-  if (opts.body && !(opts.body instanceof Blob) && typeof opts.body !== "string") {
-    opts.headers["Content-Type"] = "application/json";
-    opts.body = JSON.stringify(opts.body);
+async function loadLocalLocations() {
+  if (!("indexedDB" in window)) {
+    state.localLocations = [];
+    return;
   }
+  const db = await openLocalDB();
+  state.localLocations = await new Promise(function (resolve, reject) {
+    const tx = db.transaction("locations", "readonly");
+    const req = tx.objectStore("locations").getAll();
+    req.onsuccess = function () { resolve(req.result || []); };
+    req.onerror = function () { reject(req.error || new Error("Unable to load local locations.")); };
+  });
+  db.close();
+  updateLocalLocationStatus();
+}
 
-  let request;
+async function saveLocalLocation(handle) {
+  const id = "loc-" + crypto.randomUUID();
+  const record = { id:id, name:handle.name || "Local location", handle:handle, addedAt:Date.now() };
+  const db = await openLocalDB();
+  await new Promise(function (resolve, reject) {
+    const tx = db.transaction("locations", "readwrite");
+    tx.objectStore("locations").put(record);
+    tx.oncomplete = resolve;
+    tx.onerror = function () { reject(tx.error || new Error("Unable to save local location.")); };
+  });
+  db.close();
+  state.localLocations.push(record);
+  updateLocalLocationStatus();
+  return record;
+}
+
+async function removeLocalLocation(id) {
+  const db = await openLocalDB();
+  await new Promise(function (resolve, reject) {
+    const tx = db.transaction("locations", "readwrite");
+    tx.objectStore("locations").delete(id);
+    tx.oncomplete = resolve;
+    tx.onerror = function () { reject(tx.error || new Error("Unable to remove local location.")); };
+  });
+  db.close();
+  state.localLocations = state.localLocations.filter(function (item) { return item.id !== id; });
+  updateLocalLocationStatus();
+}
+
+function updateLocalLocationStatus() {
+  const el = $("#localLocationStatus");
+  if (!el) return;
+  const count = state.localLocations.length;
+  el.textContent = count
+    ? "Local computer: " + count + " saved location" + (count === 1 ? "" : "s")
+    : "Local computer: no saved locations";
+}
+
+async function ensureLocalPermission(record) {
+  if (!record || !record.handle) return false;
+  const opts = { mode:"readwrite" };
+  if (typeof record.handle.queryPermission === "function") {
+    const current = await record.handle.queryPermission(opts);
+    if (current === "granted") return true;
+  }
+  if (typeof record.handle.requestPermission === "function") {
+    return (await record.handle.requestPermission(opts)) === "granted";
+  }
+  return true;
+}
+
+async function addLocalLocation(side) {
+  if (!localDeckSupported()) {
+    toast("Local computer access requires Chrome or Edge over HTTPS (or localhost).", "error");
+    return;
+  }
   try {
-    request = new Request(state.bridge.base + path, Object.assign({}, opts, { targetAddressSpace:"loopback" }));
-  } catch (_) {
-    request = new Request(state.bridge.base + path, opts);
-  }
-
-  const response = await fetch(request);
-  if (response.status === 204) return null;
-  const type = response.headers.get("content-type") || "";
-  const data = type.includes("application/json") ? await response.json() : await response.text();
-  if (!response.ok) {
-    const error = new Error(data && data.error ? data.error : (data || "Local Bridge request failed"));
-    error.status = response.status;
-    throw error;
-  }
-  return data;
-}
-
-async function detectLocalBridge() {
-  try {
-    const data = await bridgeFetch("/v1/info");
-    state.bridge.info = data;
-    const status = $("#localBridgeStatus");
-    if (status) status.textContent = "Local Bridge: detected · " + (data.os || "") + " " + (data.arch || "");
-    return true;
-  } catch (_) {
-    state.bridge.info = null;
-    const status = $("#localBridgeStatus");
-    if (status) status.textContent = "Local Bridge: not connected";
-    return false;
-  }
-}
-
-async function refreshBridgeRoots() {
-  if (!state.bridge.token) return false;
-  try {
-    const data = await bridgeFetch("/v1/roots");
-    state.bridge.roots = data.roots || [];
-    const status = $("#localBridgeStatus");
-    if (status) status.textContent = "Local Bridge: connected · " + state.bridge.roots.length + " location" + (state.bridge.roots.length === 1 ? "" : "s");
-    return true;
+    const handle = await window.showDirectoryPicker({ mode:"readwrite", id:"simplescp-local-" + side });
+    const record = await saveLocalLocation(handle);
+    const pane = state.panes[side];
+    pane.mode = "browser";
+    pane.connectionId = 0;
+    pane.path = "/";
+    pane.selected = [];
+    pane.localRoot = handle;
+    pane.localRootId = record.id;
+    pane.localRootName = record.name;
+    pane.localHandles = new Map();
+    renderServerSelects();
+    await loadPane(side);
   } catch (err) {
-    if (err.status === 401) {
-      state.bridge.token = "";
-      state.bridge.roots = [];
-      localStorage.removeItem("simplescp_local_bridge_token");
+    if (!err || err.name !== "AbortError") {
+      toast(err && err.message ? err.message : "Unable to add local location.", "error");
     }
-    return false;
   }
 }
 
-async function ensureBridge(side) {
-  state.bridge.pendingSide = side;
-  const detected = await detectLocalBridge();
-  if (!detected) {
-    $("#localBridgeDetected").textContent = "Local Bridge was not detected on 127.0.0.1:9431.";
-    $("#localBridgeMessage").textContent = "Download and run SimpleSCP Local Bridge on this computer, then try again.";
-    $("#localBridgeDialog").showModal();
-    return false;
+async function selectLocalLocation(side, id) {
+  const record = state.localLocations.find(function (item) { return item.id === id; });
+  if (!record) return;
+  if (!await ensureLocalPermission(record)) {
+    toast("Permission to this local location was not granted.", "error");
+    return;
   }
-  if (await refreshBridgeRoots()) return true;
-  $("#localBridgeDetected").textContent = "Local Bridge detected. Pairing is required.";
-  $("#localBridgeMessage").textContent = "Enter the 8-character pairing code shown in the Local Bridge window.";
-  $("#localBridgeDialog").showModal();
-  $("#localBridgeCode").focus();
-  return false;
-}
-
-async function pairLocalBridge() {
-  const code = $("#localBridgeCode").value.trim().toUpperCase();
-  if (!code) return;
-  $("#pairLocalBridgeBtn").disabled = true;
-  try {
-    const result = await bridgeFetch("/v1/pair", { method:"POST", body:{ code:code }, headers:{} });
-    state.bridge.token = result.token;
-    localStorage.setItem("simplescp_local_bridge_token", result.token);
-    if (!await refreshBridgeRoots()) throw new Error("Pairing succeeded but drive enumeration failed.");
-    $("#localBridgeDialog").close();
-    const side = state.bridge.pendingSide;
-    state.bridge.pendingSide = null;
-    if (side) {
-      const pane = state.panes[side];
-      pane.mode = "bridge";
-      pane.connectionId = 0;
-      pane.localRoot = null;
-      pane.localHandles = new Map();
-      pane.path = state.bridge.roots[0]?.path || "";
-      pane.bridgeRoot = pane.path;
-      renderServerSelects();
-      await loadPane(side);
-    }
-  } catch (err) {
-    $("#localBridgeMessage").textContent = err.message;
-  } finally {
-    $("#pairLocalBridgeBtn").disabled = false;
-  }
+  const pane = state.panes[side];
+  pane.mode = "browser";
+  pane.connectionId = 0;
+  pane.path = "/";
+  pane.selected = [];
+  pane.localRoot = record.handle;
+  pane.localRootId = record.id;
+  pane.localRootName = record.name;
+  pane.localHandles = new Map();
+  renderServerSelects();
+  await loadPane(side);
 }
 
 function toast(message, type) {
