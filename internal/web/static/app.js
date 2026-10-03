@@ -552,20 +552,6 @@ async function connectPane(side, id) {
   await loadPane(side);
 }
 
-async function openLocalDeck(side) {
-  await showLocalComputer(side);
-}
-
-async function localDirectoryForPath(pane, rawPath) {
-  if (!pane.localRoot) throw new Error("Choose a local folder first.");
-  let current = pane.localRoot;
-  const parts = normalizePath(rawPath).split("/").filter(Boolean);
-  for (const part of parts) {
-    current = await current.getDirectoryHandle(part);
-  }
-  return current;
-}
-
 function updatePaneModeUI(side) {
   const pane = state.panes[side];
   const el = paneElement(side);
