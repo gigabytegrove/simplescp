@@ -32,6 +32,9 @@ const (
 
 type config struct {
 	ServerURL string `json:"server_url"`
+	DeviceID  string `json:"device_id"`
+	Secret    string `json:"secret"`
+	Name      string `json:"name"`
 }
 
 type rootInfo struct {
@@ -63,6 +66,22 @@ type desktopApp struct {
 func main() {
 	cfgPath := desktopConfigPath()
 	cfg, _ := loadConfig(cfgPath)
+	if strings.TrimSpace(cfg.DeviceID) == "" {
+		cfg.DeviceID = randomToken()
+	}
+	if strings.TrimSpace(cfg.Secret) == "" {
+		cfg.Secret = randomToken() + randomToken()
+	}
+	if strings.TrimSpace(cfg.Name) == "" {
+		if host, err := os.Hostname(); err == nil && strings.TrimSpace(host) != "" {
+			cfg.Name = host
+		} else {
+			cfg.Name = "SimpleSCP Desktop"
+		}
+	}
+	if err := saveConfig(cfgPath, cfg); err != nil {
+		log.Fatalf("save desktop identity: %v", err)
+	}
 
 	app := &desktopApp{
 		cfg:        cfg,
@@ -105,6 +124,10 @@ func main() {
 		fmt.Println("Server: not configured")
 	}
 	fmt.Println("Close this application to remove local filesystem access.")
+
+	if cfg.ServerURL != "" {
+		go app.heartbeatLoop()
+	}
 
 	go func() {
 		time.Sleep(350 * time.Millisecond)
@@ -232,6 +255,14 @@ func (a *desktopApp) setServer(raw string) error {
 			}
 		}
 		removeCookie(req, desktopCookie)
+		a.mu.RLock()
+		cfg := a.cfg
+		a.mu.RUnlock()
+		req.Header.Set("X-SimpleSCP-Desktop-ID", cfg.DeviceID)
+		req.Header.Set("X-SimpleSCP-Desktop-Secret", cfg.Secret)
+		req.Header.Set("X-SimpleSCP-Desktop-Name", cfg.Name)
+		req.Header.Set("X-SimpleSCP-Desktop-OS", runtime.GOOS)
+		req.Header.Set("X-SimpleSCP-Desktop-Arch", runtime.GOARCH)
 	}
 	proxy.ModifyResponse = func(resp *http.Response) error {
 		rewriteCookies(resp)
@@ -360,8 +391,56 @@ func (a *desktopApp) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"os":         runtime.GOOS,
 		"arch":       runtime.GOARCH,
 		"server_url": serverURL,
+		"device_id":  a.cfg.DeviceID,
+		"device_name": a.cfg.Name,
 		"roots":      enumerateRoots(),
 	})
+}
+
+func (a *desktopApp) heartbeatLoop() {
+	timer := time.NewTimer(10 * time.Second)
+	defer timer.Stop()
+	<-timer.C
+
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+	for {
+		if err := a.sendHeartbeat(); err != nil {
+			log.Printf("desktop check-in: %v", err)
+		}
+		<-ticker.C
+	}
+}
+
+func (a *desktopApp) sendHeartbeat() error {
+	a.mu.RLock()
+	cfg := a.cfg
+	a.mu.RUnlock()
+	if strings.TrimSpace(cfg.ServerURL) == "" {
+		return nil
+	}
+	endpoint := strings.TrimRight(cfg.ServerURL, "/") + "/api/desktop/heartbeat"
+	body, err := json.Marshal(map[string]any{"roots": enumerateRoots()})
+	if err != nil { return err }
+	req, err := http.NewRequest(http.MethodPost, endpoint, strings.NewReader(string(body)))
+	if err != nil { return err }
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-SimpleSCP-Desktop-ID", cfg.DeviceID)
+	req.Header.Set("X-SimpleSCP-Desktop-Secret", cfg.Secret)
+	req.Header.Set("X-SimpleSCP-Desktop-Name", cfg.Name)
+	req.Header.Set("X-SimpleSCP-Desktop-OS", runtime.GOOS)
+	req.Header.Set("X-SimpleSCP-Desktop-Arch", runtime.GOARCH)
+	client := &http.Client{Timeout: 20 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil { return err }
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized {
+		return nil // not enrolled yet; browser enrollment will establish it
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("server returned HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func cleanAbsolutePath(raw string) (string, error) {
