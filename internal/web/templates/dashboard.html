@@ -24,22 +24,28 @@
     </div>
   </header>
 
-  <nav class="menu-bar" aria-label="Application menu">
-    <button id="newConnectionBtn" type="button">Session</button>
-    <button id="refreshConnections" type="button">Refresh sessions</button>
+  <nav class="menu-bar" aria-label="Application toolbar">
+    <div class="menu-group">
+      <button id="newConnectionBtn" class="menu-primary" type="button"><span aria-hidden="true">＋</span> New session</button>
+      <button id="refreshConnections" type="button"><span aria-hidden="true">↻</span> Refresh</button>
+    </div>
     <span class="menu-spacer"></span>
-    <span class="menu-hint">F5 Refresh · Ctrl+A Select all · Shift Range · Del Delete</span>
+    <div class="menu-hint"><kbd>F5</kbd> Refresh <kbd>Ctrl+A</kbd> Select all <kbd>Shift</kbd> Range <kbd>Del</kbd> Delete</div>
   </nav>
 
   <section class="session-strip" aria-label="Saved sessions">
-    <div class="session-strip-label">Saved sessions</div>
+    <div class="session-strip-label">
+      <span>Saved sessions</span>
+      <small>Open a connection in either pane</small>
+    </div>
     <div id="connectionsList" class="connections-list"></div>
   </section>
 
   <main class="commander-shell">
     <section class="file-pane active-pane" data-pane="left" aria-label="Left file panel">
       <div class="pane-caption">
-        <span class="pane-letter">L</span>
+        <div class="pane-side"><span class="pane-letter">L</span><span class="pane-side-copy">Left pane</span></div>
+        <div class="pane-source-controls">
         <select class="endpoint-type" aria-label="Left endpoint type">
           <option value="remote">Remote server</option>
           <option value="browser">Local computer</option>
@@ -47,27 +53,34 @@
         <select class="server-select" aria-label="Left remote server"></select>
         <select class="local-location-select hidden" aria-label="Left local location"></select>
         <button class="add-location-btn hidden" type="button">Add location…</button>
-        <button class="pane-refresh toolbar-button" type="button" title="Refresh">↻</button>
+        <button class="pane-refresh toolbar-button icon-only" type="button" title="Refresh this pane" aria-label="Refresh this pane">↻</button>
+        </div>
       </div>
 
       <div class="pane-path-row">
-        <button class="up-btn toolbar-button" type="button" title="Parent folder">↑</button>
-        <button class="home-btn toolbar-button" type="button" title="Root">⌂</button>
+        <div class="path-nav">
+          <button class="up-btn toolbar-button icon-only" type="button" title="Parent folder" aria-label="Parent folder">↑</button>
+          <button class="home-btn toolbar-button icon-only" type="button" title="Root" aria-label="Root">⌂</button>
+        </div>
         <span class="path-prefix">sftp:</span>
         <input class="path-input" value="/" aria-label="Left path">
-        <button class="go-btn toolbar-button" type="button">Go</button>
+        <button class="go-btn toolbar-button" type="button">Open</button>
       </div>
 
       <div class="breadcrumbs"></div>
 
       <div class="file-actions">
-        <button class="upload-btn toolbar-button" type="button">Upload</button>
-        <input class="upload-input" type="file" multiple hidden>
-        <button class="mkdir-btn toolbar-button" type="button">New folder</button>
-        <button class="rename-btn toolbar-button" type="button" disabled>Rename</button>
-        <button class="download-btn toolbar-button" type="button" disabled>Download</button>
-        <button class="delete-btn toolbar-button danger-outline" type="button" disabled>Delete</button>
-        <div class="pane-search-wrap"><span>⌕</span><input class="pane-search" type="search" placeholder="Filter"></div>
+        <div class="file-actions-primary">
+          <button class="upload-btn toolbar-button" type="button">Upload</button>
+          <input class="upload-input" type="file" multiple hidden>
+          <button class="mkdir-btn toolbar-button" type="button">New folder</button>
+        </div>
+        <div class="file-actions-secondary">
+          <button class="rename-btn toolbar-button" type="button" disabled>Rename</button>
+          <button class="download-btn toolbar-button" type="button" disabled>Download</button>
+          <button class="delete-btn toolbar-button danger-outline" type="button" disabled>Delete</button>
+        </div>
+        <div class="pane-search-wrap"><span aria-hidden="true">⌕</span><input class="pane-search" type="search" placeholder="Filter files"><span class="filter-count"></span></div>
       </div>
 
       <div class="file-table-wrap">
@@ -83,14 +96,16 @@
       </div>
     </section>
 
-    <div class="commander-divider">
-      <button id="copyLeftToRight" type="button" title="Copy left selection to right">→</button>
-      <button id="copyRightToLeft" type="button" title="Copy right selection to left">←</button>
+    <div class="commander-divider" aria-label="Transfer controls">
+      <span class="divider-label">TRANSFER</span>
+      <button id="copyLeftToRight" type="button" title="Copy left selection to right" aria-label="Copy left selection to right"><span>→</span><small>Copy</small></button>
+      <button id="copyRightToLeft" type="button" title="Copy right selection to left" aria-label="Copy right selection to left"><span>←</span><small>Copy</small></button>
     </div>
 
     <section class="file-pane" data-pane="right" aria-label="Right file panel">
       <div class="pane-caption">
-        <span class="pane-letter">R</span>
+        <div class="pane-side"><span class="pane-letter">R</span><span class="pane-side-copy">Right pane</span></div>
+        <div class="pane-source-controls">
         <select class="endpoint-type" aria-label="Right endpoint type">
           <option value="remote">Remote server</option>
           <option value="browser">Local computer</option>
@@ -98,27 +113,34 @@
         <select class="server-select" aria-label="Right remote server"></select>
         <select class="local-location-select hidden" aria-label="Right local location"></select>
         <button class="add-location-btn hidden" type="button">Add location…</button>
-        <button class="pane-refresh toolbar-button" type="button" title="Refresh">↻</button>
+        <button class="pane-refresh toolbar-button icon-only" type="button" title="Refresh this pane" aria-label="Refresh this pane">↻</button>
+        </div>
       </div>
 
       <div class="pane-path-row">
-        <button class="up-btn toolbar-button" type="button" title="Parent folder">↑</button>
-        <button class="home-btn toolbar-button" type="button" title="Root">⌂</button>
+        <div class="path-nav">
+          <button class="up-btn toolbar-button icon-only" type="button" title="Parent folder" aria-label="Parent folder">↑</button>
+          <button class="home-btn toolbar-button icon-only" type="button" title="Root" aria-label="Root">⌂</button>
+        </div>
         <span class="path-prefix">sftp:</span>
         <input class="path-input" value="/" aria-label="Right path">
-        <button class="go-btn toolbar-button" type="button">Go</button>
+        <button class="go-btn toolbar-button" type="button">Open</button>
       </div>
 
       <div class="breadcrumbs"></div>
 
       <div class="file-actions">
-        <button class="upload-btn toolbar-button" type="button">Upload</button>
-        <input class="upload-input" type="file" multiple hidden>
-        <button class="mkdir-btn toolbar-button" type="button">New folder</button>
-        <button class="rename-btn toolbar-button" type="button" disabled>Rename</button>
-        <button class="download-btn toolbar-button" type="button" disabled>Download</button>
-        <button class="delete-btn toolbar-button danger-outline" type="button" disabled>Delete</button>
-        <div class="pane-search-wrap"><span>⌕</span><input class="pane-search" type="search" placeholder="Filter"></div>
+        <div class="file-actions-primary">
+          <button class="upload-btn toolbar-button" type="button">Upload</button>
+          <input class="upload-input" type="file" multiple hidden>
+          <button class="mkdir-btn toolbar-button" type="button">New folder</button>
+        </div>
+        <div class="file-actions-secondary">
+          <button class="rename-btn toolbar-button" type="button" disabled>Rename</button>
+          <button class="download-btn toolbar-button" type="button" disabled>Download</button>
+          <button class="delete-btn toolbar-button danger-outline" type="button" disabled>Delete</button>
+        </div>
+        <div class="pane-search-wrap"><span aria-hidden="true">⌕</span><input class="pane-search" type="search" placeholder="Filter files"><span class="filter-count"></span></div>
       </div>
 
       <div class="file-table-wrap">
