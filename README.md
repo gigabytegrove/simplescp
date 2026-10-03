@@ -212,3 +212,36 @@ Configuration:
 | `SIMPLE_SCP_AUTO_UPDATE_INTERVAL` | `15m` | Update polling interval (minimum 5 minutes) |
 
 This updater does not require the Docker socket, Watchtower, a sidecar, or a second Docker container.
+
+
+## SimpleSCP Desktop
+
+SimpleSCP Desktop is the companion Windows/Linux application for native local-computer access. It is a user-launched application, not a Windows service, Linux daemon, Docker sidecar, or background agent.
+
+Desktop connects to a SimpleSCP Server and exposes that computer's native filesystem to the SimpleSCP UI while the application is open:
+
+- Windows logical disks such as C:, D:, removable media, optical drives, and mapped network drives
+- Linux filesystem and mounted locations
+- Native browse, read, write, rename, delete, and transfer operations
+- Server-managed per-location ACLs
+- Device enable/disable and online/offline inventory from the Server admin UI
+
+Live GitHub releases include:
+
+- `simplescp-desktop-windows-amd64.exe`
+- `simplescp-desktop-windows-arm64.exe`
+- `simplescp-desktop-linux-amd64`
+- `simplescp-desktop-linux-arm64`
+
+On first launch, Desktop asks for the SimpleSCP Server URL and stores its own persistent device identity in the current user's configuration directory. It then opens the server through a loopback-only local endpoint. The server enrolls the desktop to the signed-in user and receives its drive/mount inventory.
+
+### Desktop management
+
+Server administrators can use **Desktops** in the SimpleSCP header to manage enrolled machines. The control plane shows device owner, OS/architecture, last-seen state, discovered locations, capacity information, location availability, and per-user ACLs for:
+
+- Read
+- Write
+- Rename
+- Delete
+
+Desktop filesystem operations require a short-lived access ticket minted by the Server for the signed-in user. The Desktop application verifies that ticket locally before allowing filesystem access, so server-side ACL changes are enforced by the native application rather than only hidden in the browser UI.
