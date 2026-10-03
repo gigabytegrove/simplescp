@@ -212,15 +212,19 @@ func (a *app) adminDeleteDesktop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *app) adminUpdateDesktopRoot(w http.ResponseWriter, r *http.Request) {
+	deviceID, err := parseID(r)
+	if err != nil { writeError(w,http.StatusBadRequest,"invalid desktop id"); return }
 	rootID, err := strconv.ParseInt(r.PathValue("rootID"),10,64)
 	if err != nil { writeError(w,http.StatusBadRequest,"invalid location id"); return }
 	var input desktopRootUpdateInput
 	if err := decodeJSON(r,&input); err != nil { writeError(w,http.StatusBadRequest,"invalid location settings"); return }
-	if err := a.store.UpdateDesktopRoot(rootID,input.Enabled); err != nil { writeError(w,http.StatusBadRequest,err.Error()); return }
+	if err := a.store.UpdateDesktopRoot(deviceID,rootID,input.Enabled); err != nil { writeError(w,http.StatusBadRequest,err.Error()); return }
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (a *app) adminSetDesktopACL(w http.ResponseWriter, r *http.Request) {
+	deviceID, err := parseID(r)
+	if err != nil { writeError(w,http.StatusBadRequest,"invalid desktop id"); return }
 	rootID, err := strconv.ParseInt(r.PathValue("rootID"),10,64)
 	if err != nil { writeError(w,http.StatusBadRequest,"invalid location id"); return }
 	userID, err := strconv.ParseInt(r.PathValue("userID"),10,64)
@@ -231,7 +235,7 @@ func (a *app) adminSetDesktopACL(w http.ResponseWriter, r *http.Request) {
 		RootID:rootID,UserID:userID,
 		CanRead:input.CanRead,CanWrite:input.CanWrite,CanRename:input.CanRename,CanDelete:input.CanDelete,
 	}
-	if err := a.store.SetDesktopACL(rootID,userID,acl); err != nil {
+	if err := a.store.SetDesktopACL(deviceID,rootID,userID,acl); err != nil {
 		writeError(w,http.StatusBadRequest,err.Error()); return
 	}
 	writeJSON(w,http.StatusOK,map[string]any{"acl":acl})
