@@ -558,3 +558,72 @@ label small{color:#7d8690;font-size:9px;font-weight:400}
   .update-status-grid{grid-template-columns:1fr 1fr}
   .auth-shell{grid-template-columns:1fr}.auth-brand{display:none}.auth-form-side{min-height:100vh}
 }
+
+
+/* Local computer virtual root */
+.local-welcome{
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:7px;
+  min-height:210px;
+  padding:24px;
+  text-align:center;
+  color:#68727c
+}
+.local-welcome.compact{min-height:160px}
+.local-welcome-icon{
+  width:46px;
+  height:46px;
+  display:grid;
+  place-items:center;
+  border-radius:10px;
+  background:#e6f1eb;
+  color:#2f7a5a;
+  font-size:22px;
+  font-weight:700
+}
+.local-welcome strong{
+  color:#2a333b;
+  font-size:13px
+}
+.local-welcome span{
+  max-width:360px;
+  font-size:10px;
+  line-height:1.5
+}
+.local-welcome button{
+  height:30px;
+  margin-top:3px;
+  padding:0 11px;
+  border:1px solid #9eb4a7;
+  border-radius:5px;
+  background:#fff;
+  color:#2f684d;
+  font-weight:700
+}
+.local-root-row td{
+  background:#fbfdfc
+}
+.local-root-row:hover td{
+  background:#edf6f1!important
+}
+.file-kind-drive{
+  color:#2f7a5a;
+  font-size:14px
+}
+.entry-badge{
+  margin-left:7px;
+  padding:2px 5px;
+  border-radius:4px;
+  background:#e4f0e9;
+  color:#3f765d;
+  font-size:8px;
+  font-weight:800;
+  letter-spacing:.08em
+}
+.file-pane.local-home .path-input{
+  color:#4d5f56;
+  background:#f4f8f6
+}
