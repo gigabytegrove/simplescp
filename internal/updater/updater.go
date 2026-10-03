@@ -37,6 +37,7 @@ type release struct {
 	HTMLURL         string  `json:"html_url"`
 	TargetCommitish string  `json:"target_commitish"`
 	Prerelease      bool    `json:"prerelease"`
+	PublishedAt     string  `json:"published_at"`
 	Assets          []Asset `json:"assets"`
 }
 
@@ -71,7 +72,7 @@ func useEdgeChannel(current string) bool {
 	return v == "dev" || v == "main" || v == "edge" || strings.HasPrefix(v, "main-") || strings.HasPrefix(v, "edge-")
 }
 
-func (m *Manager) Status(ctx context.Context, current, commit string) (Status, error) {
+func (m *Manager) Status(ctx context.Context, current, commit, buildTime string) (Status, error) {
 	rel, err := m.releaseFor(ctx, current)
 	if err != nil {
 		return Status{}, err
@@ -81,7 +82,17 @@ func (m *Manager) Status(ctx context.Context, current, commit string) (Status, e
 	latestLabel := rel.TagName
 	if useEdgeChannel(current) {
 		latestLabel = "edge"
-		updateAvailable = strings.TrimSpace(commit) == "" || commit == "unknown" || !strings.EqualFold(strings.TrimSpace(commit), strings.TrimSpace(rel.TargetCommitish))
+		trimmedCommit := strings.TrimSpace(commit)
+		if trimmedCommit != "" && trimmedCommit != "unknown" {
+			updateAvailable = !strings.EqualFold(trimmedCommit, strings.TrimSpace(rel.TargetCommitish))
+		} else {
+			updateAvailable = false
+			builtAt, builtErr := time.Parse(time.RFC3339, strings.TrimSpace(buildTime))
+			publishedAt, publishedErr := time.Parse(time.RFC3339, strings.TrimSpace(rel.PublishedAt))
+			if builtErr == nil && publishedErr == nil {
+				updateAvailable = publishedAt.After(builtAt)
+			}
+		}
 	}
 	return Status{
 		Current: current,
