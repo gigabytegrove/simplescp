@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine AS build
 ARG TARGETOS
 ARG TARGETARCH
 ARG VERSION=dev
@@ -13,7 +13,7 @@ RUN BUILDTIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" && \
     -ldflags="-s -w -X github.com/gigabytegrove/simplescp/internal/buildinfo.Version=${VERSION} -X github.com/gigabytegrove/simplescp/internal/buildinfo.Commit=${COMMIT} -X github.com/gigabytegrove/simplescp/internal/buildinfo.BuildTime=${BUILDTIME}" \
     -o /out/simplescp ./cmd/simplescp
 
-FROM alpine:3.22
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates tzdata && addgroup -S simplescp && adduser -S -G simplescp -u 10001 simplescp
 WORKDIR /app
 COPY --from=build /out/simplescp /app/simplescp
