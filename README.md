@@ -1,5 +1,18 @@
 # SimpleSCP
 
+<!-- GIGABYTE GROVE REPOSITORY BADGES START -->
+<p align="center">
+  <a href="https://github.com/gigabytegrove/simplescp"><img alt="GitHub repository" src="https://img.shields.io/badge/GitHub-Repository-181717?logo=github&logoColor=white"></a>
+  <a href="https://github.com/gigabytegrove/simplescp/stargazers"><img alt="GitHub stars" src="https://img.shields.io/github/stars/gigabytegrove/simplescp?style=flat&label=Stars&logo=github"></a>
+  <a href="https://github.com/gigabytegrove/simplescp/issues"><img alt="Issues" src="https://img.shields.io/badge/Issues-View-555555?logo=github"></a>
+  <a href="https://github.com/gigabytegrove/simplescp/releases"><img alt="Releases" src="https://img.shields.io/badge/Releases-View-555555?logo=github"></a>
+  <a href="https://paypal.me/gigabytegrove"><img alt="Donate via PayPal" src="https://img.shields.io/badge/Donate-PayPal-0070BA?logo=paypal&logoColor=white"></a>
+</p>
+<p align="center">
+  <a href="https://github.com/gigabytegrove/simplescp">Repository</a> · <a href="https://github.com/gigabytegrove/simplescp/stargazers">Stars</a> · <a href="https://github.com/gigabytegrove/simplescp/issues">Issues</a> · <a href="https://github.com/gigabytegrove/simplescp/releases">Releases</a> · <a href="https://paypal.me/gigabytegrove">Donate via PayPal</a>
+</p>
+<!-- GIGABYTE GROVE REPOSITORY BADGES END -->
+
 SimpleSCP is a self-hosted web-based multi-server SSH/SFTP file-transfer system. It gives you a familiar two-pane workflow for saving servers, reconnecting quickly, browsing remote filesystems, uploading and downloading files, and copying files directly between remote servers.
 
 SimpleSCP uses SFTP over SSH for remote file operations. Remote systems do not need the legacy `scp` executable.
