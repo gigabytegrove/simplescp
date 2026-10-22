@@ -228,3 +228,7 @@ Server administrators can use **Desktops** in the SimpleSCP header to manage enr
 - Delete
 
 Desktop filesystem operations require a short-lived access ticket minted by the Server for the signed-in user. The Desktop application verifies that ticket locally before allowing filesystem access, so server-side ACL changes are enforced by the native application rather than only hidden in the browser UI.
+
+## Support Gigabyte Grove
+
+If this project is useful to you, you can support ongoing Gigabyte Grove development with an optional [PayPal donation](https://paypal.me/gigabytegrove). Donations are appreciated but never required to use this repository.
